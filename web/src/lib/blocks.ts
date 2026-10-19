@@ -8,7 +8,7 @@
 // uses camelCase fields + a `type` discriminator string equal to the
 // Python class name lowercased (e.g. ResponseStartBlock → "response_start").
 
-import { capitalizeAgentName } from "./agentLabels";
+import { capitalizeAgentName } from "./agentNames";
 import { agentRootName } from "./forkHarness";
 import { nativeCodingAgentForAgentName } from "./nativeCodingAgents";
 import type { RoutingDecisionExtras } from "./routingDecision";
