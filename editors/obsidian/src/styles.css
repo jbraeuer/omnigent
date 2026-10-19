@@ -1,0 +1,398 @@
+/* Omnigent plugin styles. Theme colors come from Obsidian CSS variables only. */
+
+.omnigent-hidden {
+  display: none !important;
+}
+
+/* ── Navigator ─────────────────────────────────────────── */
+
+.omnigent-navigator {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2);
+}
+
+.omnigent-nav-row,
+.omnigent-project-row,
+.omnigent-session-row {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1) var(--size-4-2);
+  border-radius: var(--radius-s);
+  color: var(--text-normal);
+  cursor: var(--cursor);
+  min-width: 0;
+}
+
+.omnigent-nav-row:hover,
+.omnigent-project-row:hover,
+.omnigent-session-row:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.omnigent-session-row.is-active {
+  background-color: var(--background-modifier-active-hover);
+}
+
+.omnigent-session-row.is-nested {
+  padding-left: calc(var(--size-4-2) + var(--size-4-6));
+}
+
+.omnigent-session-row.is-archived .omnigent-row-title {
+  color: var(--text-faint);
+}
+
+.omnigent-row-actions {
+  display: none;
+  align-items: center;
+  gap: var(--size-2-1);
+  margin-left: auto;
+}
+
+.omnigent-project-row:hover .omnigent-row-actions,
+.omnigent-session-row:hover .omnigent-row-actions,
+.omnigent-project-row:focus-within .omnigent-row-actions,
+.omnigent-session-row:focus-within .omnigent-row-actions,
+.omnigent-project-row:focus .omnigent-row-actions,
+.omnigent-session-row:focus .omnigent-row-actions {
+  display: flex;
+}
+
+.omnigent-row-actions .clickable-icon {
+  padding: var(--size-2-1);
+}
+
+.omnigent-nav-icon {
+  display: inline-flex;
+  color: var(--icon-color);
+}
+
+.omnigent-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.omnigent-row-meta {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.omnigent-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--size-4-3);
+  padding: 0 var(--size-4-2);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.omnigent-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+}
+
+.omnigent-search {
+  flex: 1;
+}
+
+.omnigent-badge {
+  margin-left: auto;
+  min-width: 1.4em;
+  padding: 0 var(--size-4-1);
+  border-radius: var(--radius-l);
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: var(--font-ui-smaller);
+  text-align: center;
+}
+
+.omnigent-unread-dot,
+.omnigent-status-dot {
+  flex: none;
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 50%;
+}
+
+.omnigent-unread-dot {
+  background-color: var(--interactive-accent);
+}
+
+.omnigent-status-dot {
+  background-color: transparent;
+}
+
+.omnigent-status-dot.is-running,
+.omnigent-status-dot.is-launching {
+  background-color: var(--color-green);
+}
+
+.omnigent-status-dot.is-waiting {
+  background-color: var(--color-orange);
+}
+
+.omnigent-status-dot.is-failed {
+  background-color: var(--color-red);
+}
+
+.omnigent-connection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-1);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.omnigent-empty {
+  padding: var(--size-4-2);
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+}
+
+/* ── Session view ──────────────────────────────────────── */
+
+.omnigent-session-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  height: 100%;
+}
+
+.omnigent-session-header {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-3);
+  flex-wrap: wrap;
+}
+
+.omnigent-session-title {
+  font-weight: var(--font-semibold);
+  font-size: var(--font-ui-medium);
+}
+
+.omnigent-session-status {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.omnigent-session-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  margin-left: auto;
+}
+
+.omnigent-mode-toggle {
+  display: inline-flex;
+  border: var(--border-width) solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  overflow: hidden;
+}
+
+.omnigent-mode-toggle button {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.omnigent-mode-toggle button.is-active {
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.omnigent-transcript-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  user-select: text;
+}
+
+.omnigent-message {
+  margin: var(--size-4-2) 0;
+  padding: var(--size-4-1) var(--size-4-3);
+  border-radius: var(--radius-m);
+}
+
+.omnigent-message-user {
+  margin-left: 15%;
+  background-color: var(--background-secondary);
+}
+
+.omnigent-sending {
+  white-space: pre-wrap;
+}
+
+.omnigent-context {
+  margin-left: 15%;
+}
+
+.omnigent-message-user p:first-child,
+.omnigent-message-assistant p:first-child {
+  margin-top: 0;
+}
+
+.omnigent-sending {
+  opacity: 0.6;
+}
+
+.omnigent-streaming {
+  border-left: 2px solid var(--interactive-accent);
+}
+
+.omnigent-details {
+  margin: var(--size-4-1) 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.omnigent-details summary {
+  cursor: var(--cursor);
+  font-family: var(--font-monospace);
+}
+
+.omnigent-details-body {
+  margin-top: var(--size-4-1);
+}
+
+.omnigent-pre {
+  max-height: 24em;
+  overflow: auto;
+  font-size: var(--font-ui-smaller);
+}
+
+.omnigent-label {
+  margin-top: var(--size-4-1);
+  color: var(--text-faint);
+}
+
+.omnigent-status {
+  margin: var(--size-4-1) 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.omnigent-error {
+  color: var(--text-error);
+}
+
+.omnigent-approvals {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+}
+
+.omnigent-approval {
+  padding: var(--size-4-2) var(--size-4-3);
+  border: var(--border-width) solid var(--background-modifier-border);
+  border-left: 3px solid var(--color-orange);
+  border-radius: var(--radius-m);
+  background-color: var(--background-secondary);
+}
+
+.omnigent-approval-title {
+  font-weight: var(--font-semibold);
+}
+
+.omnigent-approval-actions {
+  display: flex;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-2);
+}
+
+.omnigent-inbox-session {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.omnigent-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-1);
+}
+
+.omnigent-input {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--font-text);
+}
+
+.omnigent-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--size-4-2);
+}
+
+.omnigent-attached {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-1);
+}
+
+.omnigent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  padding: 0 var(--size-4-2);
+  border-radius: var(--radius-l);
+  background-color: var(--background-modifier-hover);
+  font-size: var(--font-ui-smaller);
+}
+
+.omnigent-chip-remove {
+  display: inline-flex;
+  cursor: var(--cursor);
+}
+
+.omnigent-console {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.omnigent-console-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+}
+
+.omnigent-console-terminal {
+  flex: 1;
+  min-height: 0;
+  padding: var(--size-4-1);
+  border-radius: var(--radius-s);
+  background-color: var(--background-primary);
+}
+
+/* ── Inbox and embedded web UI ─────────────────────────── */
+
+.omnigent-inbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  max-width: 48em;
+  margin: 0 auto;
+}
+
+.omnigent-web-view {
+  padding: 0 !important;
+}
+
+.omnigent-web-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.omnigent-setting-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--size-4-2);
+}
