@@ -99,6 +99,14 @@ repos:
         files: ^(editors/vscode/.*\.[cm]?[jt]sx?|editors/vscode/tsconfig\.json|editors/vscode/package\.json|pnpm-(?:lock|workspace)\.yaml)$
         pass_filenames: false
 
+      - id: obsidian-tsc
+        name: Obsidian plugin TypeScript type check
+        language: system
+        entry: bash -c 'test -x editors/obsidian/node_modules/.bin/tsc && cd editors/obsidian && node_modules/.bin/tsc --noEmit'
+        # The plugin type-checks the shared web stream modules it bundles.
+        files: ^(editors/obsidian/.*\.[cm]?[jt]sx?|editors/obsidian/tsconfig\.json|editors/obsidian/package\.json|editors/vscode/src/discovery/.*\.ts|web/src/lib/.*\.ts|pnpm-(?:lock|workspace)\.yaml)$
+        pass_filenames: false
+
       - id: web-extension-sdk-tsc
         name: Web extension SDK TypeScript type check
         language: system
