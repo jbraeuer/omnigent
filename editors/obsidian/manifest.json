@@ -1,0 +1,10 @@
+{
+  "id": "omnigent",
+  "name": "Omnigent",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Chat with Omnigent agents, browse projects and sessions, answer approvals, and use your vault as context or workspace.",
+  "author": "Omnigent",
+  "authorUrl": "https://github.com/omnigent-ai/omnigent",
+  "isDesktopOnly": true
+}

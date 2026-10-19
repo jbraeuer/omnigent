@@ -3,6 +3,7 @@ packages:
   - 'web/electron'
   - '.github/ci-deps'
   - 'editors/vscode'
+  - 'editors/obsidian'
   - 'deploy/cloudflare'
   - 'sdks/web-extension'
   - 'examples/extensions/hello-page/web'
