@@ -102,6 +102,25 @@ describe("SessionController", () => {
     expect(client.getSession).toHaveBeenCalledTimes(1);
   });
 
+  it("drops repeated and late native preview chunks", () => {
+    const controller = new SessionController(fakeClient(async () => snapshot()), "conv_1");
+    const delta = (delta: string, index: number, messageId = "msg_1") =>
+      controller.handleEvent({ type: "text_delta", delta, messageId, index } as never);
+    delta("1. First?", 0);
+    delta("\n2. Second?", 1);
+    delta("\n2. Second?", 1);
+    expect(controller.liveText).toBe("1. First?\n2. Second?");
+
+    controller.handleEvent({ type: "message_done", messageId: "msg_1" } as never);
+    delta("\n2. Second?", 2);
+    expect(controller.liveText).toBe("");
+
+    delta("Next message", 0, "msg_2");
+    expect(controller.liveText).toBe("Next message");
+    controller.handleEvent({ type: "session_status", conversationId: "conv_1", status: "idle" });
+    expect(controller.liveText).toBe("");
+  });
+
   it("tracks status and title edges", () => {
     const controller = new SessionController(fakeClient(async () => snapshot()), "conv_1");
     controller.applySnapshot(snapshot(), ITEMS);

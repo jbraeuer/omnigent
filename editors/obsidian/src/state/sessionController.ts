@@ -59,6 +59,11 @@ export class SessionController extends Observable {
   olderItemsExist = false;
 
   private abort: AbortController | null = null;
+  /** Native preview stream (claude-native etc.) currently shown in `liveText`. */
+  private liveMessageId: string | null = null;
+  private liveChunkIndex = -1;
+  /** Native messages already committed; their late or replayed chunks are dropped. */
+  private readonly finishedMessageIds = new Set<string>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private refreshing: Promise<void> | null = null;
   private refreshQueued = false;
@@ -161,12 +166,17 @@ export class SessionController extends Observable {
   handleEvent(event: StreamEvent): void {
     switch (event.type) {
       case "text_delta":
+        if (!this.acceptLiveDelta(event.messageId, event.index)) return;
         this.liveText += event.delta;
         this.emit();
         return;
       case "session_status":
         this.status = event.status;
-        if (event.status !== "running") this.scheduleRefresh();
+        if (event.status !== "running") {
+          // The turn is over; its committed items replace any preview tail.
+          this.clearLiveText();
+          this.scheduleRefresh();
+        }
         this.emit();
         return;
       case "session_title":
@@ -174,16 +184,45 @@ export class SessionController extends Observable {
         this.emit();
         return;
       case "response_created":
-        this.liveText = "";
+        this.clearLiveText();
         this.emit();
         return;
       default:
         break;
     }
     if (REFRESH_EVENTS.has(event.type)) {
-      if (event.type === "message_done") this.liveText = "";
+      if (event.type === "message_done") {
+        if (event.messageId !== undefined) this.finishedMessageIds.add(event.messageId);
+        this.clearLiveText();
+      }
       this.scheduleRefresh();
     }
+  }
+
+  /**
+   * Whether a text delta extends the preview. Native deltas carry a message id and
+   * chunk index: a new id starts a fresh preview, and repeated chunks or chunks of an
+   * already committed message are dropped so they cannot pile up under the transcript.
+   */
+  private acceptLiveDelta(messageId: string | undefined, index: number | undefined): boolean {
+    if (messageId === undefined) return true;
+    if (this.finishedMessageIds.has(messageId)) return false;
+    if (messageId !== this.liveMessageId) {
+      this.liveText = "";
+      this.liveMessageId = messageId;
+      this.liveChunkIndex = -1;
+    }
+    if (index !== undefined) {
+      if (index <= this.liveChunkIndex) return false;
+      this.liveChunkIndex = index;
+    }
+    return true;
+  }
+
+  private clearLiveText(): void {
+    this.liveText = "";
+    this.liveMessageId = null;
+    this.liveChunkIndex = -1;
   }
 
   private scheduleRefresh(): void {
