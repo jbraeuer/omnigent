@@ -5,11 +5,15 @@
  * frames are keystrokes and text frames are JSON control (`resize`).
  * When the runner is on this machine, attach to its loopback listener directly
  * so keystrokes skip the server relay's round trips.
+ * Server text frames carry tmux copy-mode selections for the local clipboard.
  */
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+import { Notice } from "obsidian";
 import WebSocket from "ws";
 import { loadWebglRenderer } from "@/components/blocks/webglRenderer";
+import { copyText } from "@/lib/clipboard";
+import { hadRecentTerminalInput, parseTerminalClipboardMessage } from "@/lib/terminalClipboard";
 import { DIRECT_PROBE_TIMEOUT_MS, directProbeUrl } from "@/lib/terminals";
 import type { OmnigentClient } from "../api/client";
 import { WRONG_REPLICA_WS_CLOSE } from "../api/routing";
@@ -25,6 +29,8 @@ export class TerminalPane {
   private socket: WebSocket | null = null;
   private readonly resizeObserver: ResizeObserver;
   private disposed = false;
+  /** `performance.now()` of the last keystroke or mouse report; gates clipboard writes. */
+  private lastInputAt = 0;
 
   constructor(
     private readonly host: HTMLElement,
@@ -51,6 +57,18 @@ export class TerminalPane {
     this.resizeObserver.observe(host);
     this.terminal.onData((data) => this.sendInput(Buffer.from(data, "utf8")));
     this.terminal.onBinary((data) => this.sendInput(Buffer.from(data, "binary")));
+    // Copy xterm's own selection (e.g. Option-drag past the TUI's mouse mode) on ⌘C.
+    host.addEventListener(
+      "copy",
+      (event) => {
+        const selection = this.terminal.getSelection();
+        if (!selection) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.clipboardData?.setData("text/plain", selection);
+      },
+      { capture: true },
+    );
   }
 
   /**
@@ -91,6 +109,7 @@ export class TerminalPane {
     });
     socket.on("message", (data, isBinary) => {
       if (isBinary) this.terminal.write(new Uint8Array(data as Buffer));
+      else this.handleControlFrame((data as Buffer).toString("utf8"));
     });
     socket.on("close", (code, reason) => {
       if (this.socket !== socket) return;
@@ -142,6 +161,14 @@ export class TerminalPane {
   }
 
   private sendInput(bytes: Buffer): void {
+    this.lastInputAt = performance.now();
     if (this.socket?.readyState === 1) this.socket.send(bytes, { binary: true });
+  }
+
+  /** Visible for tests: apply a server text frame; only recent-input clipboard writes land. */
+  handleControlFrame(message: string): void {
+    const text = parseTerminalClipboardMessage(message);
+    if (text === null || !hadRecentTerminalInput(this.lastInputAt, performance.now())) return;
+    copyText(text).catch(() => new Notice("Could not copy the terminal selection to the clipboard."));
   }
 }

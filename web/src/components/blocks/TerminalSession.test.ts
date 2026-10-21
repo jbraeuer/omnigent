@@ -9,16 +9,18 @@
 import { Terminal } from "@xterm/xterm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  decodeTerminalClipboardBase64,
+  hadRecentTerminalInput,
+  parseTerminalClipboardMessage,
+} from "@/lib/terminalClipboard";
+import {
   SHIFT_ENTER_CSI_U,
   TerminalSession,
   WHEEL_REPORTS_MAX_PER_EVENT,
   applyTerminalCopy,
-  decodeTerminalClipboardBase64,
-  hadRecentTerminalInput,
   isUnexpectedTerminalClose,
   loadWebglRenderer,
   openTerminalLink,
-  parseTerminalClipboardMessage,
   resolveTerminalWorkspaceFileLink,
   sgrWheelReports,
   terminalTheme,
