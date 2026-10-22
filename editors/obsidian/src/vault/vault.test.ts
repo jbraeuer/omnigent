@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { composeMessageWithContext, extractWikiLinks, splitContext } from "./context";
+import { composeMessageWithContext, extractWikiLinks, splitContext, vaultFileFromObsidianUri } from "./context";
 import { localHostIdForServer, pickHost, resolveWorkspacePath } from "./workspace";
 
 describe("extractWikiLinks", () => {
@@ -80,5 +80,21 @@ describe("splitContext", () => {
     const composed = composeMessageWithContext("Summarize", [{ path: "A.md", content: "a" }, { path: "B/C.md", content: "c" }], 100);
     expect(splitContext(composed)).toMatchObject({ text: "Summarize", notePaths: ["A.md", "B/C.md"] });
     expect(splitContext("plain")).toEqual({ text: "plain", context: null, notePaths: [] });
+  });
+});
+
+describe("vaultFileFromObsidianUri", () => {
+  it("returns the decoded note path for links into this vault", () => {
+    expect(vaultFileFromObsidianUri("obsidian://open?vault=Databricks&file=Diary%2F2026-W42", "Databricks")).toBe(
+      "Diary/2026-W42",
+    );
+  });
+
+  it("ignores other vaults, other actions and non-Obsidian links", () => {
+    expect(vaultFileFromObsidianUri("obsidian://open?vault=Personal&file=Note", "Databricks")).toBeNull();
+    expect(vaultFileFromObsidianUri("obsidian://omnigent?session=a", "Databricks")).toBeNull();
+    expect(vaultFileFromObsidianUri("obsidian://open?vault=Databricks", "Databricks")).toBeNull();
+    expect(vaultFileFromObsidianUri("https://example.com/?vault=Databricks&file=x", "Databricks")).toBeNull();
+    expect(vaultFileFromObsidianUri("not a url", "Databricks")).toBeNull();
   });
 });

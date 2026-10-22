@@ -10,7 +10,7 @@ import { SessionController } from "../state/sessionController";
 import { NotePickerModal } from "./notePickerModal";
 import { renderBlocks } from "./renderBlocks";
 import { terminalLabel } from "../api/terminals";
-import { splitContext } from "../vault/context";
+import { splitContext, vaultFileFromObsidianUri } from "../vault/context";
 import { TerminalPane } from "./terminalPane";
 
 export const SESSION_VIEW_TYPE = "omnigent-session";
@@ -115,6 +115,8 @@ export class SessionView extends ItemView {
     this.transcriptEl = this.scrollEl.createDiv({ cls: "omnigent-transcript" });
     this.pendingEl = this.scrollEl.createDiv({ cls: "omnigent-pending" });
     this.liveEl = this.scrollEl.createDiv({ cls: "omnigent-live" });
+    // Notes linked from the transcript open beside the session instead of replacing it.
+    this.registerDomEvent(this.scrollEl, "click", (event: MouseEvent) => this.openVaultLink(event), { capture: true });
     const consoleWrap = root.createDiv({ cls: ["omnigent-console", "omnigent-hidden"] });
     const consoleBar = consoleWrap.createDiv({ cls: "omnigent-console-bar" });
     this.consoleStatusEl = consoleBar.createDiv({ cls: "omnigent-status" });
@@ -200,6 +202,15 @@ export class SessionView extends ItemView {
     this.mode = mode;
     this.applyMode();
     this.app.workspace.requestSaveLayout();
+  }
+
+  private openVaultLink(event: MouseEvent): void {
+    const link = (event.target as HTMLElement | null)?.closest("a");
+    const file = link && vaultFileFromObsidianUri(link.getAttribute("href") ?? "", this.app.vault.getName());
+    if (!file) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void this.app.workspace.openLinkText(file, "", "tab");
   }
 
   private applyMode(): void {

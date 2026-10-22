@@ -65,3 +65,19 @@ export function composeMessageWithContext(userText: string, notes: ContextNote[]
   }
   return `${userText}${CONTEXT_SEPARATOR}${sections.join("\n\n")}`;
 }
+
+/**
+ * The note an `obsidian://open?vault=…&file=…` link targets in `vaultName`, or null
+ * for other vaults, other actions and malformed links.
+ */
+export function vaultFileFromObsidianUri(href: string, vaultName: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "obsidian:" || url.hostname !== "open") return null;
+  if (url.searchParams.get("vault") !== vaultName) return null;
+  return url.searchParams.get("file") || null;
+}
