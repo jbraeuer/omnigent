@@ -9,6 +9,8 @@ import { isSystemUserContent } from "@/lib/systemMessage";
 import { splitContext } from "../vault/context";
 
 const MAX_TOOL_OUTPUT_CHARS = 20_000;
+const SYSTEM_REMINDER = /<system-reminder>\s*([\s\S]*?)\s*<\/system-reminder>/g;
+const MAX_REMINDER_TITLE_CHARS = 80;
 
 export interface RenderContext {
   app: App;
@@ -65,6 +67,20 @@ function renderExecution(parent: HTMLElement, execution: ToolExecution): void {
   });
 }
 
+/** Split harness-injected `<system-reminder>` blocks out of a user message's text. */
+export function splitSystemReminders(text: string): { text: string; reminders: string[] } {
+  const reminders = [...text.matchAll(SYSTEM_REMINDER)].map((match) => match[1]!).filter(Boolean);
+  return { text: reminders.length ? text.replace(SYSTEM_REMINDER, "").trim() : text, reminders };
+}
+
+/** A collapsed-section title from the reminder's first line. */
+export function systemReminderTitle(reminder: string): string {
+  const firstLine = reminder.split("\n", 1)[0]!.trim();
+  const shortened =
+    firstLine.length > MAX_REMINDER_TITLE_CHARS ? `${firstLine.slice(0, MAX_REMINDER_TITLE_CHARS - 1)}…` : firstLine;
+  return shortened ? `System reminder: ${shortened}` : "System reminder";
+}
+
 /** Render `blocks` into `container` (cleared first). */
 export function renderBlocks(ctx: RenderContext, container: HTMLElement, blocks: AnyBlock[]): void {
   container.empty();
@@ -77,8 +93,14 @@ export function renderBlocks(ctx: RenderContext, container: HTMLElement, blocks:
           .filter(isTextBlock)
           .map((part) => part.text)
           .join("\n\n");
-        if (!text.trim()) break;
-        const { text: typed, context, notePaths } = splitContext(text);
+        const { text: withoutReminders, reminders } = splitSystemReminders(text);
+        for (const reminder of reminders) {
+          details(container, systemReminderTitle(reminder), "omnigent-system-reminder", (body) =>
+            markdown(ctx, body, reminder, "omnigent-message-context"),
+          );
+        }
+        if (!withoutReminders.trim()) break;
+        const { text: typed, context, notePaths } = splitContext(withoutReminders);
         markdown(ctx, container, typed, "omnigent-message-user");
         if (context) {
           details(container, `Context: ${notePaths.join(", ") || "vault notes"}`, "omnigent-context", (body) =>

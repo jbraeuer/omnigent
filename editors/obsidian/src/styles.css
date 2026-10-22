@@ -228,7 +228,8 @@
   white-space: pre-wrap;
 }
 
-.omnigent-context {
+.omnigent-context,
+.omnigent-system-reminder {
   margin-left: 15%;
 }
 
