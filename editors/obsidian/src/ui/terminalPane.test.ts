@@ -33,3 +33,21 @@ describe("TerminalPane clipboard frames", () => {
     expect(copyText).not.toHaveBeenCalled();
   });
 });
+
+describe("TerminalPane keys", () => {
+  function keyEvent(type: string, init: Partial<KeyboardEvent>): KeyboardEvent {
+    return { type, key: "", shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, isComposing: false, keyCode: 0, preventDefault: vi.fn(), ...init } as unknown as KeyboardEvent;
+  }
+
+  it("sends Shift+Enter once as CSI-u and leaves plain Enter to xterm", () => {
+    const pane = paneWithInputAt(0);
+    const send = vi.fn();
+    (pane as unknown as { socket: unknown }).socket = { readyState: 1, send };
+
+    expect(pane.handleKey(keyEvent("keydown", { key: "Enter", shiftKey: true }))).toBe(false);
+    expect(pane.handleKey(keyEvent("keyup", { key: "Enter", shiftKey: true }))).toBe(false);
+    expect(pane.handleKey(keyEvent("keydown", { key: "Enter" }))).toBe(true);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]?.[0].toString()).toBe("\x1b[13;2u");
+  });
+});

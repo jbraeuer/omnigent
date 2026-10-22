@@ -13,8 +13,8 @@ import {
   hadRecentTerminalInput,
   parseTerminalClipboardMessage,
 } from "@/lib/terminalClipboard";
+import { SHIFT_ENTER_CSI_U, terminalKeyEventPayload } from "@/lib/terminalKeys";
 import {
-  SHIFT_ENTER_CSI_U,
   TerminalSession,
   WHEEL_REPORTS_MAX_PER_EVENT,
   applyTerminalCopy,
@@ -24,7 +24,6 @@ import {
   resolveTerminalWorkspaceFileLink,
   sgrWheelReports,
   terminalTheme,
-  terminalKeyEventPayload,
   touchScrollPayload,
   type ConnectionState,
   wheelReportPayload,

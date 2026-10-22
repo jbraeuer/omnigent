@@ -14,6 +14,7 @@ import WebSocket from "ws";
 import { loadWebglRenderer } from "@/components/blocks/webglRenderer";
 import { copyText } from "@/lib/clipboard";
 import { hadRecentTerminalInput, parseTerminalClipboardMessage } from "@/lib/terminalClipboard";
+import { terminalKeyEventPayload } from "@/lib/terminalKeys";
 import { DIRECT_PROBE_TIMEOUT_MS, directProbeUrl } from "@/lib/terminals";
 import type { OmnigentClient } from "../api/client";
 import { WRONG_REPLICA_WS_CLOSE } from "../api/routing";
@@ -57,6 +58,7 @@ export class TerminalPane {
     this.resizeObserver.observe(host);
     this.terminal.onData((data) => this.sendInput(Buffer.from(data, "utf8")));
     this.terminal.onBinary((data) => this.sendInput(Buffer.from(data, "binary")));
+    this.terminal.attachCustomKeyEventHandler((event) => this.handleKey(event));
     // Copy xterm's own selection (e.g. Option-drag past the TUI's mouse mode) on ⌘C.
     host.addEventListener(
       "copy",
@@ -163,6 +165,21 @@ export class TerminalPane {
   private sendInput(bytes: Buffer): void {
     this.lastInputAt = performance.now();
     if (this.socket?.readyState === 1) this.socket.send(bytes, { binary: true });
+  }
+
+  /**
+   * Visible for tests: send keys xterm doesn't encode (Shift+Enter as CSI-u, so the TUI
+   * inserts a newline instead of submitting). Returns `false` when the key was handled.
+   */
+  handleKey(event: KeyboardEvent): boolean {
+    const payload = terminalKeyEventPayload(event);
+    if (payload === null) return true;
+    // xterm calls this for keydown, keypress and keyup; send once, suppress all three.
+    if (event.type === "keydown") {
+      event.preventDefault();
+      this.sendInput(Buffer.from(payload, "utf8"));
+    }
+    return false;
   }
 
   /** Visible for tests: apply a server text frame; only recent-input clipboard writes land. */
