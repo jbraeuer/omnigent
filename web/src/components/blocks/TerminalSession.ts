@@ -17,6 +17,7 @@ import "@xterm/xterm/css/xterm.css";
 import { withBasePath } from "@/lib/basePath";
 import { hadRecentTerminalInput, parseTerminalClipboardMessage } from "@/lib/terminalClipboard";
 import { type CodeFont, codeFontFamilyForEditor, readCodeFont } from "@/lib/codeFontPreferences";
+import { parseHttpUrl } from "@/lib/openLinkInApp";
 import { splitWorkspaceFileCitation } from "@/components/ai-elements/streamdown-security";
 import { resolveChatFilePath } from "@/hooks/useWorkspaceChangedFiles";
 import { CodexTerminalPalette, codexTerminalTheme } from "./CodexTerminalPalette";
@@ -149,13 +150,7 @@ export function openTerminalLink(
     }
     return;
   }
-  let url: URL;
-  try {
-    url = new URL(uri, window.location.href);
-  } catch {
-    return;
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return;
+  if (!parseHttpUrl(uri)) return;
   window.open(uri, "_blank", "noopener,noreferrer");
 }
 
