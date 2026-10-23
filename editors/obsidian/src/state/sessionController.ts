@@ -9,6 +9,7 @@
  * reconnect contract (subscribe first, then snapshot) without client-side dedupe.
  */
 import { isTextBlock, type AnyBlock } from "@/lib/blocks";
+import { claudePermissionModeFromSession, isClaudeNativeSession } from "@/lib/claudePermissionMode";
 import type { ConversationItem } from "@/lib/conversationItems";
 import type { StreamEvent } from "@/lib/events";
 import { collectInboxItems, type InboxItem } from "@/lib/inbox";
@@ -55,6 +56,8 @@ export class SessionController extends Observable {
   status: SessionStatus = "idle";
   error: string | null = null;
   streamConnected = false;
+  /** Claude Code's permission mode (`plan`, `acceptEdits`, …), when the session reports one. */
+  permissionMode: string | null = null;
   /** Whether the transcript shows only the newest page of a longer history. */
   olderItemsExist = false;
 
@@ -77,6 +80,11 @@ export class SessionController extends Observable {
 
   get title(): string {
     return this.snapshot?.title?.trim() || this.snapshot?.agent_name || this.sessionId;
+  }
+
+  /** Whether the session runs Claude Code in a terminal, whose permission mode can be switched. */
+  get supportsPermissionMode(): boolean {
+    return isClaudeNativeSession(this.snapshot);
   }
 
   start(): void {
@@ -105,6 +113,22 @@ export class SessionController extends Observable {
       throw error;
     }
     this.scheduleRefresh();
+  }
+
+  /** Switch Claude Code's permission mode; the server reports the mode the terminal landed on. */
+  async setPermissionMode(mode: string): Promise<void> {
+    const previous = this.permissionMode;
+    this.permissionMode = mode;
+    this.emit();
+    try {
+      const snapshot = await this.client.updateSession(this.sessionId, { permission_mode: mode });
+      this.permissionMode = permissionModeOf(snapshot) ?? mode;
+    } catch (error) {
+      this.permissionMode = previous;
+      throw error;
+    } finally {
+      this.emit();
+    }
   }
 
   async interrupt(): Promise<void> {
@@ -156,6 +180,7 @@ export class SessionController extends Observable {
       },
     ]);
     if (snapshot.status) this.status = snapshot.status;
+    this.permissionMode = permissionModeOf(snapshot) ?? this.permissionMode;
     const committedUserTexts = new Set(userTexts(this.blocks));
     this.pendingMessages = this.pendingMessages.filter((message) => !committedUserTexts.has(message));
     this.error = null;
@@ -177,6 +202,10 @@ export class SessionController extends Observable {
           this.clearLiveText();
           this.scheduleRefresh();
         }
+        this.emit();
+        return;
+      case "session_permission_mode":
+        this.permissionMode = event.permissionMode;
         this.emit();
         return;
       case "session_title":
@@ -263,6 +292,13 @@ export class SessionController extends Observable {
     this.error = error instanceof Error ? error.message : String(error);
     this.emit();
   }
+}
+
+function permissionModeOf(snapshot: SessionSnapshot): string | null {
+  return claudePermissionModeFromSession({
+    labels: snapshot.labels,
+    terminalLaunchArgs: snapshot.terminal_launch_args,
+  });
 }
 
 function userTexts(blocks: AnyBlock[]): string[] {

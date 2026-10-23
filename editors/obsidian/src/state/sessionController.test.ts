@@ -121,6 +121,34 @@ describe("SessionController", () => {
     expect(controller.liveText).toBe("");
   });
 
+  it("reads, switches and follows Claude Code's permission mode", async () => {
+    const claude = (mode: string) =>
+      snapshot({
+        labels: { "omnigent.wrapper": "claude-code-native-ui", "omnigent.claude_native.permission_mode": mode },
+      });
+    const client = fakeClient(async () => claude("default"));
+    const updateSession = vi.fn(async () => claude("plan"));
+    (client as unknown as { updateSession: typeof updateSession }).updateSession = updateSession;
+    const controller = new SessionController(client, "conv_1");
+    expect(controller.supportsPermissionMode).toBe(false);
+
+    controller.applySnapshot(claude("default"), ITEMS);
+    expect(controller.supportsPermissionMode).toBe(true);
+    expect(controller.permissionMode).toBe("default");
+
+    await controller.setPermissionMode("plan");
+    expect(updateSession).toHaveBeenCalledWith("conv_1", { permission_mode: "plan" });
+    expect(controller.permissionMode).toBe("plan");
+
+    // Shift+Tab in the terminal is reported live.
+    controller.handleEvent({ type: "session_permission_mode", conversationId: "conv_1", permissionMode: "auto" });
+    expect(controller.permissionMode).toBe("auto");
+
+    updateSession.mockRejectedValueOnce(new Error("runner offline"));
+    await expect(controller.setPermissionMode("acceptEdits")).rejects.toThrow("runner offline");
+    expect(controller.permissionMode).toBe("auto");
+  });
+
   it("tracks status and title edges", () => {
     const controller = new SessionController(fakeClient(async () => snapshot()), "conv_1");
     controller.applySnapshot(snapshot(), ITEMS);

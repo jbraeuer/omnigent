@@ -4,6 +4,12 @@
  * that can pull notes from the vault in as context.
  */
 import { Component, ItemView, MarkdownRenderer, Notice, setIcon, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
+import {
+  CLAUDE_NATIVE_DEFAULT_PERMISSION_MODE,
+  CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES,
+  claudePermissionModeLabel,
+  isSwitchableClaudePermissionMode,
+} from "@/lib/claudePermissionMode";
 import type { InboxItem } from "@/lib/inbox";
 import type OmnigentPlugin from "../main";
 import { SessionController } from "../state/sessionController";
@@ -49,6 +55,7 @@ export class SessionView extends ItemView {
   private approvalsEl!: HTMLElement;
   private errorEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
+  private permissionSelect!: HTMLSelectElement;
   private attachedEl!: HTMLElement;
   /** Vault paths attached to the next message besides `[[links]]` in its text. */
   private attachedPaths: string[] = [];
@@ -138,6 +145,11 @@ export class SessionView extends ItemView {
       }
     });
     const composerActions = composer.createDiv({ cls: "omnigent-composer-actions" });
+    this.permissionSelect = composerActions.createEl("select", {
+      cls: ["dropdown", "omnigent-permission-mode", "omnigent-hidden"],
+      attr: { "aria-label": "Permission mode" },
+    });
+    this.registerDomEvent(this.permissionSelect, "change", () => void this.changePermissionMode(this.permissionSelect.value));
     const attachNote = composerActions.createEl("button", { text: "Add note", attr: { "aria-label": "Attach a note as context" } });
     this.registerDomEvent(attachNote, "click", () =>
       new NotePickerModal(this.app, (file) => this.attach(file.path)).open(),
@@ -295,9 +307,44 @@ export class SessionView extends ItemView {
         text: splitContext(message).text,
       });
     }
+    this.renderPermissionMode(controller);
     this.scheduleLiveRender();
     this.renderApprovals(controller.approvals);
     if (stickToBottom) this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
+  }
+
+  /** Claude Code's switchable modes, plus the current one when it can't be switched to (e.g. bypass). */
+  private renderPermissionMode(controller: SessionController): void {
+    const select = this.permissionSelect;
+    select.toggleClass("omnigent-hidden", !controller.supportsPermissionMode);
+    if (!controller.supportsPermissionMode) return;
+    const current = controller.permissionMode ?? CLAUDE_NATIVE_DEFAULT_PERMISSION_MODE;
+    const options = isSwitchableClaudePermissionMode(current)
+      ? CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES
+      : [...CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES, { value: current, label: claudePermissionModeLabel(current) }];
+    const key = options.map((option) => option.value).join(",");
+    if (select.dataset.options !== key) {
+      select.empty();
+      for (const option of options) {
+        const el = select.createEl("option", { value: option.value, text: `Mode: ${option.label}` });
+        el.disabled = !isSwitchableClaudePermissionMode(option.value);
+      }
+      select.dataset.options = key;
+    }
+    select.value = current;
+  }
+
+  private async changePermissionMode(mode: string): Promise<void> {
+    const controller = this.controller;
+    if (!controller || mode === controller.permissionMode) return;
+    this.permissionSelect.disabled = true;
+    try {
+      await controller.setPermissionMode(mode);
+    } catch (error) {
+      new Notice(`Could not change the permission mode: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.permissionSelect.disabled = false;
+    }
   }
 
   /** Re-render the streaming tail at most every LIVE_RENDER_INTERVAL_MS. */

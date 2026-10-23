@@ -329,6 +329,10 @@
   gap: var(--size-4-2);
 }
 
+.omnigent-permission-mode {
+  margin-right: auto;
+}
+
 .omnigent-attached {
   display: flex;
   flex-wrap: wrap;

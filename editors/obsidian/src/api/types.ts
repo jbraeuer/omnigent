@@ -38,6 +38,10 @@ export interface SessionSnapshot extends SessionListItem {
   /** Raw `response.elicitation_request` event dicts still awaiting a verdict. */
   pending_elicitations?: Record<string, unknown>[];
   terminal_pending?: boolean;
+  /** Harness metadata, e.g. the native wrapper and Claude Code's current permission mode. */
+  labels?: Record<string, string | null> | null;
+  /** CLI arguments the native terminal was launched with. */
+  terminal_launch_args?: string[] | null;
 }
 
 /** Stored new-session defaults of a project (`ProjectConfig` in the web client). */
