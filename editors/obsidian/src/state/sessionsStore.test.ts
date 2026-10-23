@@ -1,6 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OmnigentClient } from "../api/client";
 import type { SessionListItem } from "../api/types";
-import { applyUpdatesFrame, matchesFilter, pendingApprovalCount, sortedTopLevelSessions } from "./sessionsStore";
+import {
+  HEARTBEAT_WATCHDOG_MS,
+  RECONCILE_INTERVAL_MS,
+  SessionsStore,
+  applyUpdatesFrame,
+  matchesFilter,
+  pendingApprovalCount,
+  sortedTopLevelSessions,
+} from "./sessionsStore";
 
 function row(id: string, overrides: Partial<SessionListItem> = {}): SessionListItem {
   return { id, title: id, status: "idle", updated_at: 100, ...overrides };
@@ -58,5 +68,76 @@ describe("matchesFilter", () => {
     expect(matchesFilter(session, "jpmc perf")).toBe(true);
     expect(matchesFilter(session, "claude setup")).toBe(true);
     expect(matchesFilter(session, "jpmc codex")).toBe(false);
+  });
+});
+
+describe("SessionsStore liveness", () => {
+  function fakeSocket() {
+    const socket = Object.assign(new EventEmitter(), {
+      readyState: 1,
+      send: vi.fn(),
+      close: vi.fn(),
+      terminate: vi.fn(() => socket.emit("close")),
+    });
+    return socket;
+  }
+
+  function fakeClient(pages: SessionListItem[][], sockets: ReturnType<typeof fakeSocket>[]) {
+    let call = 0;
+    return {
+      listProjects: vi.fn(async () => []),
+      getProjectOrder: vi.fn(async () => null),
+      listSessions: vi.fn(async () => ({ data: pages[Math.min(call++, pages.length - 1)]! })),
+      openSessionUpdates: vi.fn(async () => {
+        const socket = fakeSocket();
+        sockets.push(socket);
+        return socket;
+      }),
+      routing: { learn: vi.fn() },
+    } as unknown as OmnigentClient;
+  }
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("re-lists periodically, so sessions whose discovery push was missed still appear", async () => {
+    const sockets: ReturnType<typeof fakeSocket>[] = [];
+    const store = new SessionsStore();
+    await store.connect(fakeClient([[{ id: "a" }], [{ id: "a" }, { id: "b" }]], sockets));
+    expect([...store.sessions.keys()]).toEqual(["a"]);
+
+    sockets[0]!.emit("message", Buffer.from(JSON.stringify({ type: "heartbeat" })));
+    await vi.advanceTimersByTimeAsync(RECONCILE_INTERVAL_MS / 2);
+    sockets[0]!.emit("message", Buffer.from(JSON.stringify({ type: "heartbeat" })));
+    await vi.advanceTimersByTimeAsync(RECONCILE_INTERVAL_MS / 2 + 10_000);
+    expect([...store.sessions.keys()]).toEqual(["a", "b"]);
+    expect(sockets).toHaveLength(1);
+    store.disconnect();
+  });
+
+  it("keeps a pushed new session through a re-list that doesn't include it yet", async () => {
+    const sockets: ReturnType<typeof fakeSocket>[] = [];
+    const store = new SessionsStore();
+    await store.connect(fakeClient([[{ id: "a" }]], sockets));
+    sockets[0]!.emit("message", Buffer.from(JSON.stringify({ type: "changed", items: [{ id: "new" }] })));
+
+    await store.refresh();
+    expect([...store.sessions.keys()].sort()).toEqual(["a", "new"]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await store.refresh();
+    expect([...store.sessions.keys()]).toEqual(["a"]);
+    store.disconnect();
+  });
+
+  it("replaces a socket that stopped heartbeating", async () => {
+    const sockets: ReturnType<typeof fakeSocket>[] = [];
+    const store = new SessionsStore();
+    await store.connect(fakeClient([[{ id: "a" }]], sockets));
+
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_WATCHDOG_MS + 10_000);
+    expect(sockets[0]!.terminate).toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sockets).toHaveLength(2);
+    store.disconnect();
   });
 });

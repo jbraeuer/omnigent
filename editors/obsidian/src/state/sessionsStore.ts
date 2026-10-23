@@ -3,7 +3,9 @@
  *
  * Loads `GET /v1/projects` + `GET /v1/sessions`, then keeps rows fresh through
  * `WS /v1/sessions/updates` (watch-set diffs plus push discovery of new
- * sessions), reconnecting with backoff.
+ * sessions), reconnecting with backoff. Discovery pushes only reach sockets on
+ * the replica that created the session and are dropped while disconnected, so
+ * the list is also reconciled periodically, and a silent socket is replaced.
  */
 import type WebSocket from "ws";
 import { sessionTitle, type OmnigentClient } from "../api/client";
@@ -17,6 +19,13 @@ export type ConnectionState =
   | { kind: "error"; message: string };
 
 const MAX_BACKOFF_MS = 30_000;
+/** Re-list sessions this often, as the web client does, to catch missed discovery pushes. */
+export const RECONCILE_INTERVAL_MS = 60_000;
+/** The server heartbeats every 30 s; two missed in a row means the socket is dead. */
+export const HEARTBEAT_WATCHDOG_MS = 70_000;
+const HEALTH_CHECK_INTERVAL_MS = 10_000;
+/** A re-list can lag a create on search-indexed servers; keep new rows this long meanwhile. */
+const NEW_ROW_KEEPALIVE_MS = 60_000;
 
 /** Apply one updates-socket frame to the row map; returns whether anything changed. */
 export function applyUpdatesFrame(rows: Map<string, SessionListItem>, frame: SessionUpdatesFrame): boolean {
@@ -105,6 +114,11 @@ export class SessionsStore extends Observable {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private backoffMs = 1_000;
   private generation = 0;
+  private healthTimer: ReturnType<typeof setInterval> | null = null;
+  private lastFrameAt = 0;
+  private lastRefreshAt = 0;
+  /** When rows arrived by create or push, so a lagging re-list doesn't drop them. */
+  private readonly addedAt = new Map<string, number>();
 
   /** (Re)connect to a server; replaces any previous connection. */
   async connect(client: OmnigentClient): Promise<void> {
@@ -119,6 +133,7 @@ export class SessionsStore extends Observable {
       this.setState({ kind: "connected" });
       this.backoffMs = 1_000;
       await this.openSocket(generation);
+      if (generation === this.generation) this.startHealthChecks(generation);
     } catch (error) {
       if (generation !== this.generation) return;
       this.setState({ kind: "error", message: error instanceof Error ? error.message : String(error) });
@@ -145,32 +160,41 @@ export class SessionsStore extends Observable {
     this.generation++;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    if (this.healthTimer) clearInterval(this.healthTimer);
+    this.healthTimer = null;
     closeQuietly(this.socket);
     this.socket = null;
   }
 
   private clear(): void {
     this.sessions.clear();
+    this.addedAt.clear();
     this.projects = [];
   }
 
   /** Reload projects and the first page of sessions. */
   async refresh(): Promise<void> {
     const client = this.requireClient();
+    this.lastRefreshAt = Date.now();
     const [projects, sessions, order] = await Promise.all([
       client.listProjects(),
       client.listSessions({ limit: 200 }),
       client.getProjectOrder().catch(() => null),
     ]);
     this.projects = orderProjects(projects, order);
+    const now = Date.now();
+    const keep = [...this.sessions.values()].filter((row) => now - (this.addedAt.get(row.id) ?? 0) < NEW_ROW_KEEPALIVE_MS);
     this.sessions.clear();
+    for (const row of keep) this.sessions.set(row.id, row);
     for (const row of sessions.data) this.sessions.set(row.id, row);
+    for (const [id, at] of this.addedAt) if (now - at >= NEW_ROW_KEEPALIVE_MS) this.addedAt.delete(id);
     this.emit();
     this.sendWatch();
   }
 
   /** Merge a row the caller fetched or created (e.g. right after creating a session). */
   upsert(row: SessionListItem): void {
+    if (!this.sessions.has(row.id)) this.addedAt.set(row.id, Date.now());
     this.sessions.set(row.id, { ...this.sessions.get(row.id), ...row });
     this.emit();
     this.sendWatch();
@@ -189,6 +213,14 @@ export class SessionsStore extends Observable {
     await this.requireClient().setProjectOrder(ids);
   }
 
+  /** Re-list now unless that happened within `minAgeMs`, e.g. when Obsidian regains focus. */
+  reconcile(minAgeMs = 0): void {
+    if (this.state.kind !== "connected" || Date.now() - this.lastRefreshAt < minAgeMs) return;
+    void this.refresh().catch(() => {
+      // Transient; the next reconcile or reconnect retries.
+    });
+  }
+
   get inboxCount(): number {
     return pendingApprovalCount(this.sessions.values());
   }
@@ -205,8 +237,13 @@ export class SessionsStore extends Observable {
       return;
     }
     this.socket = socket;
-    socket.on("open", () => this.sendWatch());
+    this.lastFrameAt = Date.now();
+    socket.on("open", () => {
+      this.lastFrameAt = Date.now();
+      this.sendWatch();
+    });
     socket.on("message", (data) => {
+      this.lastFrameAt = Date.now();
       let frame: SessionUpdatesFrame;
       try {
         frame = JSON.parse(data.toString()) as SessionUpdatesFrame;
@@ -214,7 +251,10 @@ export class SessionsStore extends Observable {
         return;
       }
       if (frame.type === "snapshot" || frame.type === "changed") {
-        for (const item of frame.items) this.client?.routing.learn(item.id, item.host_id);
+        for (const item of frame.items) {
+          this.client?.routing.learn(item.id, item.host_id);
+          if (frame.type === "changed" && !this.sessions.has(item.id)) this.addedAt.set(item.id, Date.now());
+        }
       }
       if (applyUpdatesFrame(this.sessions, frame)) this.emit();
       // A pushed new session must join the watch-set to keep receiving deltas.
@@ -226,6 +266,20 @@ export class SessionsStore extends Observable {
     socket.on("error", () => {
       // `close` follows and drives the reconnect.
     });
+  }
+
+  /** Reconcile the list on an interval and replace a socket that stopped heartbeating. */
+  private startHealthChecks(generation: number): void {
+    this.healthTimer = setInterval(() => {
+      if (generation !== this.generation) return;
+      const socket = this.socket;
+      if (socket && Date.now() - this.lastFrameAt > HEARTBEAT_WATCHDOG_MS) {
+        // `close` drives the reconnect, which re-lists sessions.
+        socket.terminate();
+        return;
+      }
+      this.reconcile(RECONCILE_INTERVAL_MS);
+    }, HEALTH_CHECK_INTERVAL_MS);
   }
 
   private sendWatch(): void {

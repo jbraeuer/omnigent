@@ -20,6 +20,9 @@ import { SESSION_VIEW_TYPE, SessionView, type OutputMode } from "./ui/sessionVie
 import { composeMessageWithContext, extractWikiLinks, type ContextNote } from "./vault/context";
 import { pickHost, resolveWorkspacePath } from "./vault/workspace";
 
+/** Skip the focus re-list when the list was fetched this recently. */
+const FOCUS_RECONCILE_MIN_AGE_MS = 10_000;
+
 export default class OmnigentPlugin extends Plugin {
   override settings: OmnigentSettings = { ...DEFAULT_SETTINGS };
   readonly store = new SessionsStore();
@@ -55,6 +58,8 @@ export default class OmnigentPlugin extends Plugin {
         );
       }),
     );
+    // Catch sessions created elsewhere while Obsidian was in the background.
+    this.registerDomEvent(window, "focus", () => this.store.reconcile(FOCUS_RECONCILE_MIN_AGE_MS));
     this.app.workspace.onLayoutReady(() => {
       void this.reconnect();
       if (this.app.workspace.getLeavesOfType(NAVIGATOR_VIEW_TYPE).length === 0) void this.activateNavigator(false);
