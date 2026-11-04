@@ -4,11 +4,12 @@
  * snapshot (`pending_elicitations`), refetched when its pending count changes —
  * the same composition as the web Inbox page, via the shared `inbox.ts` helpers.
  */
-import { ItemView, Notice, type WorkspaceLeaf } from "obsidian";
+import { ItemView, type WorkspaceLeaf } from "obsidian";
 import { collectInboxItems, groupInboxEntries, type InboxItem, type InboxSource } from "@/lib/inbox";
 import { sessionTitle } from "../api/client";
 import type { SessionListItem } from "../api/types";
 import type OmnigentPlugin from "../main";
+import { needsFullUi, renderApprovalCard } from "./approvalCard";
 
 export const INBOX_VIEW_TYPE = "omnigent-inbox";
 
@@ -115,32 +116,13 @@ export class InboxView extends ItemView {
     const row = item.row as SessionListItem;
     const card = this.listEl.createDiv({ cls: "omnigent-approval" });
     card.createDiv({ cls: "omnigent-inbox-session", text: sessionTitle(row) });
-    card.createDiv({ cls: "omnigent-approval-title", text: item.elicitation.message || "Approval requested" });
-    if (item.elicitation.contentPreview) {
-      card.createEl("pre", { cls: "omnigent-pre" }).createEl("code", { text: item.elicitation.contentPreview });
-    }
-    const actions = card.createDiv({ cls: "omnigent-approval-actions" });
-    const needsFullUi =
-      item.elicitation.mode === "url" || Object.keys(item.elicitation.requestedSchema ?? {}).length > 0;
-    if (!needsFullUi) {
-      const accept = actions.createEl("button", { cls: "mod-cta", text: "Approve" });
-      const decline = actions.createEl("button", { cls: "mod-warning", text: "Deny" });
-      const resolve = async (action: "accept" | "decline") => {
-        accept.disabled = decline.disabled = true;
-        try {
-          await this.plugin.withClient((client) =>
-            client.resolveElicitation(item.resolveSessionId, item.elicitation.elicitationId, action),
-          );
-          card.remove();
-        } catch (error) {
-          accept.disabled = decline.disabled = false;
-          new Notice(`Could not answer: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      };
-      accept.addEventListener("click", () => void resolve("accept"));
-      decline.addEventListener("click", () => void resolve("decline"));
-    }
-    const open = actions.createEl("button", { text: needsFullUi ? "Answer in session" : "Open session" });
+    const actions = renderApprovalCard(card, item, "Approval requested", async ({ action, content }) => {
+      await this.plugin.withClient((client) =>
+        client.resolveElicitation(item.resolveSessionId, item.elicitation.elicitationId, action, content),
+      );
+      card.remove();
+    });
+    const open = actions.createEl("button", { text: needsFullUi(item) ? "Answer in session" : "Open session" });
     open.addEventListener("click", () => void this.plugin.openSession(row.id));
   }
 

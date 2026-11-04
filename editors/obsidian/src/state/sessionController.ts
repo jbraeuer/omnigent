@@ -14,6 +14,7 @@ import type { ConversationItem } from "@/lib/conversationItems";
 import type { StreamEvent } from "@/lib/events";
 import { collectInboxItems, type InboxItem } from "@/lib/inbox";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
+import { nativeCodingAgentForWrapper, WRAPPER_LABEL_KEY } from "@/lib/nativeCodingAgents";
 import type { SseStreamResult } from "@/lib/sse";
 import type { OmnigentClient } from "../api/client";
 import type { SessionSnapshot, SessionStatus } from "../api/types";
@@ -21,6 +22,9 @@ import { Observable } from "./observable";
 
 const REFRESH_DEBOUNCE_MS = 250;
 const MAX_STREAM_BACKOFF_MS = 15_000;
+
+/** Native harnesses whose runner can type their own `/clear`. */
+const CLEARABLE_HARNESSES = new Set(["claude-native", "codex-native"]);
 
 /** Stream events that mean the committed transcript or pending prompts changed. */
 const REFRESH_EVENTS = new Set<StreamEvent["type"]>([
@@ -60,6 +64,14 @@ export class SessionController extends Observable {
   permissionMode: string | null = null;
   /** Whether the transcript shows only the newest page of a longer history. */
   olderItemsExist = false;
+  /** The session a native `/clear` moved this session's terminal to; the view follows it. */
+  supersededBy: string | null = null;
+  /** What a running terminal agent is parked on, e.g. `"permission prompt"`, when it says. */
+  blockedOn: string | null = null;
+  /** Receives the agent's transient requests to show a workspace-relative file. */
+  onOpenFileRequest: ((path: string) => void) | null = null;
+  /** Whether the server accepts the `clear` control (from `GET /v1/info`). */
+  private serverAcceptsClear = false;
 
   private abort: AbortController | null = null;
   /** Native preview stream (claude-native etc.) currently shown in `liveText`. */
@@ -82,6 +94,21 @@ export class SessionController extends Observable {
     return this.snapshot?.title?.trim() || this.snapshot?.agent_name || this.sessionId;
   }
 
+  /** Header status: why a running session isn't moving, else its status. */
+  get statusLabel(): string {
+    if (this.status !== "running") return this.status;
+    if (this.approvals.length > 0) return "waiting for your approval";
+    if (this.blockedOn === "permission prompt") return "waiting for approval in the console";
+    if (this.blockedOn) return `waiting in the console (${this.blockedOn})`;
+    return this.status;
+  }
+
+  /** Whether `/clear` can run the harness's own clear (claude-native or codex-native). */
+  get supportsClear(): boolean {
+    const harness = nativeCodingAgentForWrapper(this.snapshot?.labels?.[WRAPPER_LABEL_KEY])?.harness;
+    return this.serverAcceptsClear && harness !== undefined && CLEARABLE_HARNESSES.has(harness);
+  }
+
   /** Whether the session runs Claude Code in a terminal, whose permission mode can be switched. */
   get supportsPermissionMode(): boolean {
     return isClaudeNativeSession(this.snapshot);
@@ -91,6 +118,18 @@ export class SessionController extends Observable {
     if (this.abort) return;
     this.abort = new AbortController();
     void this.streamLoop(this.abort.signal);
+    void this.loadServerInfo();
+  }
+
+  /** Visible for tests: learn which session controls the server accepts; older servers lack the list. */
+  async loadServerInfo(): Promise<void> {
+    try {
+      const info = await this.client.serverInfo();
+      this.serverAcceptsClear = info.session_event_types?.includes("clear") ?? false;
+      this.emit();
+    } catch {
+      // Without the list, `/clear` stays a plain message to the harness.
+    }
   }
 
   stop(): void {
@@ -135,8 +174,19 @@ export class SessionController extends Observable {
     await this.client.interrupt(this.sessionId);
   }
 
-  async resolveApproval(item: InboxItem, action: "accept" | "decline"): Promise<void> {
-    await this.client.resolveElicitation(item.resolveSessionId, item.elicitation.elicitationId, action);
+  /** Clear the agent's context; the harness continues in a new session (see {@link supersededBy}). */
+  async clearContext(): Promise<void> {
+    this.error = null;
+    try {
+      await this.client.clearContext(this.sessionId);
+    } catch (error) {
+      this.fail(error);
+      throw error;
+    }
+  }
+
+  async resolveApproval(item: InboxItem, action: "accept" | "decline", content?: Record<string, unknown>): Promise<void> {
+    await this.client.resolveElicitation(item.resolveSessionId, item.elicitation.elicitationId, action, content);
     this.approvals = this.approvals.filter((candidate) => candidate !== item);
     this.emit();
     this.scheduleRefresh();
@@ -180,6 +230,7 @@ export class SessionController extends Observable {
       },
     ]);
     if (snapshot.status) this.status = snapshot.status;
+    if (this.status !== "running") this.blockedOn = null;
     this.permissionMode = permissionModeOf(snapshot) ?? this.permissionMode;
     const committedUserTexts = new Set(userTexts(this.blocks));
     this.pendingMessages = this.pendingMessages.filter((message) => !committedUserTexts.has(message));
@@ -197,6 +248,7 @@ export class SessionController extends Observable {
         return;
       case "session_status":
         this.status = event.status;
+        this.blockedOn = event.status === "running" ? (event.blockedOn ?? null) : null;
         if (event.status !== "running") {
           // The turn is over; its committed items replace any preview tail.
           this.clearLiveText();
@@ -214,6 +266,15 @@ export class SessionController extends Observable {
         return;
       case "response_created":
         this.clearLiveText();
+        this.emit();
+        return;
+      case "ui_open_file":
+        this.onOpenFileRequest?.(event.path);
+        return;
+      case "session_superseded":
+        // Live-only; a later open shows the notice the server appended instead.
+        if (event.conversationId !== this.sessionId || event.targetConversationId === this.sessionId) return;
+        this.supersededBy = event.targetConversationId;
         this.emit();
         return;
       default:

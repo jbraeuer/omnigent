@@ -22,6 +22,7 @@ import {
   type ProjectOrder,
   type SessionList,
   type SessionListItem,
+  type ServerInfo,
   type SessionSnapshot,
   type TerminalResource,
 } from "./types";
@@ -42,6 +43,7 @@ export interface InputText {
 export class OmnigentClient {
   readonly routing: HostRouting;
   private readonly hostResolves = new Map<string, Promise<void>>();
+  private serverInfoRequest: Promise<ServerInfo> | null = null;
 
   constructor(
     readonly baseUrl: string,
@@ -121,6 +123,15 @@ export class OmnigentClient {
 
   health(): Promise<unknown> {
     return this.request("/health", { timeoutMs: 5_000 });
+  }
+
+  /** `GET /v1/info`, fetched once per client; a failed fetch is retried on the next call. */
+  serverInfo(): Promise<ServerInfo> {
+    this.serverInfoRequest ??= this.request<ServerInfo>("/v1/info").catch((error: unknown) => {
+      this.serverInfoRequest = null;
+      throw error;
+    });
+    return this.serverInfoRequest;
   }
 
   me(): Promise<{ user_id?: string | null; email?: string | null }> {
@@ -205,6 +216,11 @@ export class OmnigentClient {
 
   interrupt(sessionId: string): Promise<PostEventResponse> {
     return this.postEvent(sessionId, { type: "interrupt", data: {} });
+  }
+
+  /** Run the native harness's own `/clear`; the stream then reports `session_superseded`. */
+  clearContext(sessionId: string): Promise<PostEventResponse> {
+    return this.postEvent(sessionId, { type: "clear", data: {} });
   }
 
   private postEvent(sessionId: string, event: Record<string, unknown>): Promise<PostEventResponse> {

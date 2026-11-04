@@ -13,6 +13,7 @@ import {
 import type { InboxItem } from "@/lib/inbox";
 import type OmnigentPlugin from "../main";
 import { SessionController } from "../state/sessionController";
+import { needsFullUi, renderApprovalCard } from "./approvalCard";
 import { NotePickerModal } from "./notePickerModal";
 import { renderBlocks } from "./renderBlocks";
 import { terminalLabel } from "../api/terminals";
@@ -52,6 +53,7 @@ export class SessionView extends ItemView {
   private consoleEl!: HTMLElement;
   private consoleStatusEl!: HTMLElement;
   private terminalSelect!: HTMLSelectElement;
+  private reconnectButton!: HTMLButtonElement;
   private approvalsEl!: HTMLElement;
   private errorEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
@@ -129,6 +131,8 @@ export class SessionView extends ItemView {
     this.consoleStatusEl = consoleBar.createDiv({ cls: "omnigent-status" });
     this.terminalSelect = consoleBar.createEl("select", { cls: ["dropdown", "omnigent-hidden"], attr: { "aria-label": "Terminal" } });
     this.registerDomEvent(this.terminalSelect, "change", () => void this.attachTerminal(this.terminalSelect.value));
+    this.reconnectButton = consoleBar.createEl("button", { cls: "omnigent-hidden", text: "Reconnect" });
+    this.registerDomEvent(this.reconnectButton, "click", () => void this.attachTerminal(this.terminal?.attachedId ?? undefined));
     this.consoleEl = consoleWrap.createDiv({ cls: "omnigent-console-terminal" });
     this.approvalsEl = root.createDiv({ cls: "omnigent-approvals" });
 
@@ -192,6 +196,7 @@ export class SessionView extends ItemView {
     const controller = new SessionController(client, sessionId);
     this.controller = controller;
     this.unsubscribe = controller.subscribe(() => this.render());
+    controller.onOpenFileRequest = (path) => void this.openRequestedFile(controller, path);
     controller.start();
     this.applyMode();
     this.render();
@@ -216,6 +221,23 @@ export class SessionView extends ItemView {
     this.app.workspace.requestSaveLayout();
   }
 
+  /** Show a file the agent asked for in a tab beside this session, if it is in the vault. */
+  private async openRequestedFile(controller: SessionController, relativePath: string): Promise<void> {
+    // Like the web UI, only a session on screen opens files; background views ignore requests.
+    if (controller !== this.controller || !controller.snapshot || !this.containerEl.isShown()) return;
+    const file = await this.plugin.vaultFileForSession(controller.snapshot, relativePath);
+    if (!file) {
+      new Notice(`The agent asked to show ${relativePath}, which is not in this vault.`);
+      return;
+    }
+    let existing: WorkspaceLeaf | null = null;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (!existing && (leaf.view as { file?: { path?: string } }).file?.path === file) existing = leaf;
+    });
+    if (existing) await this.app.workspace.revealLeaf(existing);
+    else await this.app.workspace.openLinkText(file, "", "tab");
+  }
+
   private openVaultLink(event: MouseEvent): void {
     const link = (event.target as HTMLElement | null)?.closest("a");
     const file = link && vaultFileFromObsidianUri(link.getAttribute("href") ?? "", this.app.vault.getName());
@@ -234,8 +256,8 @@ export class SessionView extends ItemView {
     this.scrollEl.toggleClass("omnigent-hidden", consoleMode);
     this.consoleEl.parentElement!.toggleClass("omnigent-hidden", !consoleMode);
     if (consoleMode && this.controller && !this.terminal) {
-      this.terminal = new TerminalPane(this.consoleEl, this.controller.client, this.controller.sessionId, (message) =>
-        this.consoleStatusEl.setText(message),
+      this.terminal = new TerminalPane(this.consoleEl, this.controller.client, this.controller.sessionId, (message, reconnectable) =>
+        this.setConsoleStatus(message, reconnectable),
       );
       void this.attachTerminal();
     } else if (!consoleMode && this.terminal) {
@@ -247,7 +269,7 @@ export class SessionView extends ItemView {
   private async attachTerminal(terminalId?: string): Promise<void> {
     const pane = this.terminal;
     if (!pane) return;
-    this.consoleStatusEl.setText("Connecting to terminal…");
+    this.setConsoleStatus("Connecting to terminal…");
     try {
       const terminals = await pane.attach(false, terminalId);
       this.terminalSelect.empty();
@@ -257,8 +279,13 @@ export class SessionView extends ItemView {
       if (pane.attachedId) this.terminalSelect.value = pane.attachedId;
       this.terminalSelect.toggleClass("omnigent-hidden", terminals.length < 2);
     } catch (error) {
-      this.consoleStatusEl.setText(`Could not attach: ${error instanceof Error ? error.message : String(error)}`);
+      this.setConsoleStatus(`Could not attach: ${error instanceof Error ? error.message : String(error)}`, true);
     }
+  }
+
+  private setConsoleStatus(message: string, reconnectable = false): void {
+    this.consoleStatusEl.setText(message);
+    this.reconnectButton.toggleClass("omnigent-hidden", !reconnectable);
   }
 
   private render(): void {
@@ -270,9 +297,13 @@ export class SessionView extends ItemView {
       (this.leaf as WorkspaceLeaf & { updateHeader?: () => void }).updateHeader?.();
       (this as unknown as { titleEl?: HTMLElement }).titleEl?.setText(controller.title);
     }
+    if (controller.supersededBy) {
+      this.followSuperseded(controller.supersededBy);
+      return;
+    }
     const running = controller.status === "running" || controller.status === "launching";
     this.statusEl.setText(
-      [controller.status, controller.snapshot?.agent_name, controller.streamConnected ? null : "reconnecting…"]
+      [controller.statusLabel, controller.snapshot?.agent_name, controller.streamConnected ? null : "reconnecting…"]
         .filter(Boolean)
         .join(" · "),
     );
@@ -311,6 +342,17 @@ export class SessionView extends ItemView {
     this.scheduleLiveRender();
     this.renderApprovals(controller.approvals);
     if (stickToBottom) this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
+  }
+
+  /** A native `/clear` moved the agent to a new session: show that one in this tab. */
+  private followSuperseded(targetSessionId: string): void {
+    this.teardown();
+    new Notice("Context cleared. Continuing in the new session.");
+    void this.leaf.setViewState({
+      type: SESSION_VIEW_TYPE,
+      active: true,
+      state: { sessionId: targetSessionId, mode: this.mode } satisfies SessionViewState,
+    });
   }
 
   /** Claude Code's switchable modes, plus the current one when it can't be switched to (e.g. bypass). */
@@ -367,30 +409,13 @@ export class SessionView extends ItemView {
     this.approvalsEl.empty();
     for (const item of approvals) {
       const card = this.approvalsEl.createDiv({ cls: "omnigent-approval" });
-      card.createDiv({ cls: "omnigent-approval-title", text: item.elicitation.message || "The agent is asking for approval" });
-      if (item.elicitation.contentPreview) {
-        card.createEl("pre", { cls: "omnigent-pre" }).createEl("code", { text: item.elicitation.contentPreview });
+      const actions = renderApprovalCard(card, item, "The agent is asking for approval", async (answer) => {
+        await this.controller?.resolveApproval(item, answer.action, answer.content);
+      });
+      if (needsFullUi(item)) {
+        const open = actions.createEl("button", { cls: "mod-cta", text: "Answer in Omnigent" });
+        open.addEventListener("click", () => this.plugin.openInOmnigent(`/c/${encodeURIComponent(item.row.id)}`));
       }
-      const buttons = card.createDiv({ cls: "omnigent-approval-actions" });
-      if (item.elicitation.mode === "url" || Object.keys(item.elicitation.requestedSchema ?? {}).length > 0) {
-        // Forms and URL-mode prompts need the full web UI.
-        const open = buttons.createEl("button", { cls: "mod-cta", text: "Answer in Omnigent" });
-        open.addEventListener("click", () =>
-          this.plugin.openInOmnigent(`/c/${encodeURIComponent(item.row.id)}`),
-        );
-        continue;
-      }
-      const accept = buttons.createEl("button", { cls: "mod-cta", text: "Approve" });
-      const decline = buttons.createEl("button", { cls: "mod-warning", text: "Deny" });
-      const resolve = (action: "accept" | "decline") => {
-        accept.disabled = decline.disabled = true;
-        this.controller?.resolveApproval(item, action).catch((error: unknown) => {
-          accept.disabled = decline.disabled = false;
-          new Notice(`Could not answer the approval: ${error instanceof Error ? error.message : String(error)}`);
-        });
-      };
-      accept.addEventListener("click", () => resolve("accept"));
-      decline.addEventListener("click", () => resolve("decline"));
     }
   }
 
@@ -411,6 +436,12 @@ export class SessionView extends ItemView {
     const controller = this.controller;
     const text = this.inputEl.value.trim();
     if (!controller || !text) return;
+    if (text === "/clear" && controller.supportsClear) {
+      this.inputEl.value = "";
+      // The controller shows a failure; restore the command so it can be retried.
+      await controller.clearContext().catch(() => (this.inputEl.value = text));
+      return;
+    }
     const attached = this.attachedPaths;
     this.inputEl.value = "";
     this.attachedPaths = [];

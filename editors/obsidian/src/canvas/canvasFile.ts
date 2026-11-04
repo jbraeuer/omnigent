@@ -6,7 +6,8 @@
  * `obsidian://omnigent?session=<id>` URI, and positions the user moved survive
  * regeneration because node ids are session ids.
  */
-import type { SessionListItem } from "../api/types";
+import { pullRequestReference, pullRequestState } from "../api/pullRequests";
+import type { SessionListItem, SessionPullRequestSummary } from "../api/types";
 
 export interface CanvasNode {
   id: string;
@@ -48,10 +49,17 @@ export function cardText(session: SessionListItem, title: string): string {
   const details = [session.status ?? "idle", session.agent_name, session.git_branch ?? undefined]
     .filter(Boolean)
     .join(" · ");
+  const pr = session.pull_request;
+  const pullRequest = pr ? `\n[${pullRequestReference(pr)}](${pr.url})${pullRequestStateSuffix(pr)}` : "";
   const approvals = session.pending_elicitations_count
     ? `\n\n**${session.pending_elicitations_count} approval(s) waiting**`
     : "";
-  return `### [${escapedTitle}](${sessionUri(session.id)})\n${details}${approvals}`;
+  return `### [${escapedTitle}](${sessionUri(session.id)})\n${details}${pullRequest}${approvals}`;
+}
+
+function pullRequestStateSuffix(pr: SessionPullRequestSummary): string {
+  const state = pullRequestState(pr);
+  return state === "unknown" ? "" : ` ${state}`;
 }
 
 function isSessionCard(node: CanvasNode): boolean {

@@ -15,3 +15,17 @@ export function mergeProjectConfig(
   if (!config.host_id) delete config.workspace;
   return config;
 }
+
+/**
+ * A project's default model and reasoning effort for a new session. They belong to
+ * the project's configured agent, so another picked agent keeps its harness defaults.
+ */
+export function projectLaunchOverrides(
+  config: ProjectConfig | undefined,
+  agentId: string,
+): { model_override?: string; reasoning_effort?: string } {
+  if (!config?.agent_id || config.agent_id !== agentId) return {};
+  const model = typeof config.model === "string" ? config.model.trim() : "";
+  const effort = typeof config.effort === "string" ? config.effort.trim() : "";
+  return { ...(model ? { model_override: model } : {}), ...(effort ? { reasoning_effort: effort } : {}) };
+}

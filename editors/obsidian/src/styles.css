@@ -113,6 +113,32 @@
   text-align: center;
 }
 
+.omnigent-pr-chip {
+  flex: none;
+  padding: 0 var(--size-4-1);
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-decoration: none;
+}
+
+.omnigent-pr-chip:hover {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.omnigent-pr-chip.is-open {
+  color: var(--color-green);
+}
+
+.omnigent-pr-chip.is-merged {
+  color: var(--color-purple);
+}
+
+.omnigent-pr-chip.is-closed {
+  color: var(--color-red);
+}
+
 .omnigent-unread-dot,
 .omnigent-status-dot {
   flex: none;
@@ -300,9 +326,21 @@
   font-weight: var(--font-semibold);
 }
 
+.omnigent-approval-detail {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.omnigent-approval-directories {
+  margin: 0;
+  padding-left: var(--size-4-5);
+  word-break: break-all;
+}
+
 .omnigent-approval-actions {
   display: flex;
   gap: var(--size-4-2);
+  flex-wrap: wrap;
   margin-top: var(--size-4-2);
 }
 

@@ -61,4 +61,13 @@ describe("canvasFileName", () => {
     expect(canvasFileName('Q3: plans/ideas [draft]')).toBe("Q3 plans ideas draft");
     expect(canvasFileName("///")).toBe("Untitled");
   });
+
+  it("links a session's pull request on its card", () => {
+    const text = cardText(
+      session("a", { pull_request: { url: "https://github.com/o/r/pull/7", number: 7, state: "MERGED" } }),
+      "Ship it",
+    );
+    expect(text).toContain("\n[#7](https://github.com/o/r/pull/7) merged");
+    expect(cardText(session("b"), "No PR")).not.toContain("pull");
+  });
 });

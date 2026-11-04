@@ -25,6 +25,21 @@ export interface SessionListItem {
   parent_session_id?: string | null;
   runner_online?: boolean | null;
   host_online?: boolean | null;
+  /** The session's first linked PR, as its host last reported it. */
+  pull_request?: SessionPullRequestSummary | null;
+}
+
+/** `SessionPullRequestSummary` on session rows. */
+export interface SessionPullRequestSummary {
+  url: string;
+  number: number;
+  repository?: string;
+  title?: string | null;
+  /** `"OPEN"`, `"MERGED"` or `"CLOSED"` as last fetched; `null` before the first fetch. */
+  state?: string | null;
+  is_draft?: boolean;
+  /** Provider labels such as `request_name` ("Merge request") and `number_prefix` ("!"). */
+  provider_display?: Record<string, string> | null;
 }
 
 export interface SessionList {
@@ -49,6 +64,9 @@ export interface ProjectConfig {
   agent_id?: string;
   host_id?: string;
   workspace?: string;
+  /** Default model and reasoning effort for sessions with `agent_id`. */
+  model?: string;
+  effort?: string;
   [key: string]: unknown;
 }
 
@@ -96,6 +114,14 @@ export interface CreateSessionRequest {
   host_id?: string;
   workspace?: string;
   initial_items?: unknown[];
+  model_override?: string;
+  reasoning_effort?: string;
+}
+
+/** The fields of `GET /v1/info` the plugin reads. */
+export interface ServerInfo {
+  /** Event types `POST /v1/sessions/{id}/events` accepts; absent on older servers. */
+  session_event_types?: string[];
 }
 
 export interface PostEventResponse {

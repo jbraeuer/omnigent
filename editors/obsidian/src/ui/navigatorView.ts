@@ -5,7 +5,8 @@
  */
 import { ItemView, Menu, Notice, setIcon, type WorkspaceLeaf } from "obsidian";
 import { sessionTitle } from "../api/client";
-import type { Project, SessionListItem } from "../api/types";
+import { pullRequestDescription, pullRequestReference, pullRequestState } from "../api/pullRequests";
+import type { Project, SessionListItem, SessionPullRequestSummary } from "../api/types";
 import type OmnigentPlugin from "../main";
 import { matchesFilter, sortedTopLevelSessions, type MoveDirection } from "../state/sessionsStore";
 import { ConfirmModal, TextPromptModal } from "./newSessionModal";
@@ -286,6 +287,7 @@ export class NavigatorView extends ItemView {
     const status = session.status ?? "idle";
     row.createSpan({ cls: ["omnigent-status-dot", `is-${status}`], attr: { "aria-label": status } });
     row.createSpan({ cls: "omnigent-row-title", text: sessionTitle(session) });
+    if (session.pull_request) this.renderPullRequest(row, session.pull_request);
     const approvals = session.pending_elicitations_count ?? 0;
     if (approvals > 0) row.createSpan({ cls: "omnigent-badge", text: String(approvals) });
     else if (session.viewer_unread) row.createSpan({ cls: "omnigent-unread-dot", attr: { "aria-label": "Unread" } });
@@ -297,6 +299,18 @@ export class NavigatorView extends ItemView {
       if (event.key === "Enter") void this.plugin.openSession(session.id);
     });
     row.addEventListener("contextmenu", (event) => this.sessionMenu(session).showAtMouseEvent(event));
+  }
+
+  /** PR chip that opens the PR in the browser instead of the session. */
+  private renderPullRequest(row: HTMLElement, pr: SessionPullRequestSummary): void {
+    const description = pullRequestDescription(pr);
+    const chip = row.createEl("a", {
+      cls: ["omnigent-pr-chip", `is-${pullRequestState(pr)}`],
+      text: pullRequestReference(pr),
+      href: pr.url,
+      attr: { "aria-label": description, title: description },
+    });
+    chip.addEventListener("click", (event) => event.stopPropagation());
   }
 
   private sessionMenu(session: SessionListItem): Menu {

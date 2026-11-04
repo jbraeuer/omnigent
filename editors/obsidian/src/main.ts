@@ -6,10 +6,11 @@
 import { FileSystemAdapter, MarkdownView, Notice, Plugin, TFile, normalizePath, type WorkspaceLeaf } from "obsidian";
 import { isLoopbackUrl } from "./auth/auth";
 import { sessionTitle, type OmnigentClient } from "./api/client";
-import type { Project, SessionListItem } from "./api/types";
+import type { Project, SessionListItem, SessionSnapshot } from "./api/types";
 import { buildCanvas, canvasFileName, sessionsByProject, type CanvasData } from "./canvas/canvasFile";
 import { createClient, readLocalHostId } from "./connection";
 import { DEFAULT_SETTINGS, OmnigentSettingTab, type OmnigentSettings } from "./settings";
+import { projectLaunchOverrides } from "./state/projectConfig";
 import { SessionsStore, sortedTopLevelSessions } from "./state/sessionsStore";
 import { FULL_OMNIGENT_VIEW_TYPE, FullOmnigentView } from "./ui/fullOmnigentView";
 import { INBOX_VIEW_TYPE, InboxView } from "./ui/inboxView";
@@ -18,7 +19,7 @@ import { NewSessionModal, type NewSessionChoices } from "./ui/newSessionModal";
 import { ProjectSettingsModal } from "./ui/projectSettingsModal";
 import { SESSION_VIEW_TYPE, SessionView, type OutputMode } from "./ui/sessionView";
 import { composeMessageWithContext, extractWikiLinks, type ContextNote } from "./vault/context";
-import { pickHost, resolveWorkspacePath } from "./vault/workspace";
+import { pickHost, resolveWorkspacePath, vaultPathForWorkspaceFile } from "./vault/workspace";
 
 /** Skip the focus re-list when the list was fetched this recently. */
 const FOCUS_RECONCILE_MIN_AGE_MS = 10_000;
@@ -248,6 +249,18 @@ export default class OmnigentPlugin extends Plugin {
     return composeMessageWithContext(text, notes, this.settings.contextCharLimit);
   }
 
+  /**
+   * Vault path for a file a session's agent asked to show, when the session runs on
+   * this machine with its working directory inside the vault; else `null`.
+   */
+  async vaultFileForSession(session: SessionSnapshot, relativePath: string): Promise<string | null> {
+    const client = await this.getClient();
+    const localHostId = await readLocalHostId(client.baseUrl);
+    if (localHostId && session.host_id && session.host_id !== localHostId) return null;
+    const vaultPath = vaultPathForWorkspaceFile(this.vaultBasePath(), session.workspace, relativePath);
+    return vaultPath && this.app.vault.getFileByPath(normalizePath(vaultPath)) ? normalizePath(vaultPath) : null;
+  }
+
   private vaultBasePath(): string | null {
     const adapter = this.app.vault.adapter;
     return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : null;
@@ -300,14 +313,16 @@ export default class OmnigentPlugin extends Plugin {
 
   private async startSession(choices: NewSessionChoices): Promise<void> {
     const client = await this.getClient();
+    const projectConfig = this.store.projects.find((project) => project.id === choices.projectId)?.config;
     const session = await client.createSession({
       agent_id: choices.agentId,
+      ...projectLaunchOverrides(projectConfig, choices.agentId),
       ...(choices.projectId ? { project_id: choices.projectId } : {}),
       ...(choices.hostId ? { host_id: choices.hostId } : {}),
       ...(choices.hostId && choices.workspace ? { workspace: choices.workspace } : {}),
     });
     this.store.upsert(session);
-    const projectAgent = this.store.projects.find((project) => project.id === choices.projectId)?.config?.agent_id;
+    const projectAgent = projectConfig?.agent_id;
     // Remember the last picked agent, unless it merely came from the project's defaults.
     if (choices.agentId !== this.settings.defaultAgentId && choices.agentId !== projectAgent) {
       this.settings.defaultAgentId = choices.agentId;

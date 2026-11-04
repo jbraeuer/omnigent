@@ -24,6 +24,21 @@ export function resolveWorkspacePath(
   return vaultBasePath;
 }
 
+/**
+ * Vault path of a file an agent asked to show (`ui.open_file`, relative to the
+ * session's working directory), or `null` when it lies outside the vault.
+ */
+export function vaultPathForWorkspaceFile(
+  vaultBasePath: string | null,
+  workspace: string | null | undefined,
+  relativePath: string,
+): string | null {
+  if (!vaultBasePath || !workspace || !path.isAbsolute(workspace)) return null;
+  const relative = path.relative(vaultBasePath, path.resolve(workspace, relativePath));
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  return relative.split(path.sep).join("/");
+}
+
 /** `~/.omnigent/daemons/*.json` record written by `omnigent host`. */
 interface HostDaemonRecord {
   host_id?: unknown;

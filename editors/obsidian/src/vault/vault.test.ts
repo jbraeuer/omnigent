@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { composeMessageWithContext, extractWikiLinks, splitContext, vaultFileFromObsidianUri } from "./context";
-import { localHostIdForServer, pickHost, resolveWorkspacePath } from "./workspace";
+import { localHostIdForServer, pickHost, resolveWorkspacePath, vaultPathForWorkspaceFile } from "./workspace";
 
 describe("extractWikiLinks", () => {
   it("returns link targets without aliases, headings or duplicates", () => {
@@ -44,6 +44,22 @@ describe("resolveWorkspacePath", () => {
     expect(resolveWorkspacePath("/v", "none", "")).toBeUndefined();
     expect(resolveWorkspacePath(null, "vault", "")).toBeUndefined();
     expect(() => resolveWorkspacePath("/v", "folder", "../outside")).toThrow("outside the vault");
+  });
+});
+
+describe("vaultPathForWorkspaceFile", () => {
+  it("maps a workspace-relative file to its vault path", () => {
+    expect(vaultPathForWorkspaceFile("/v", "/v", "Notes/Plan.md")).toBe("Notes/Plan.md");
+    expect(vaultPathForWorkspaceFile("/v", "/v/Agents", "out/report.md")).toBe("Agents/out/report.md");
+  });
+
+  it("rejects files outside the vault and sessions without a local workspace", () => {
+    expect(vaultPathForWorkspaceFile("/v", "/repo", "README.md")).toBeNull();
+    expect(vaultPathForWorkspaceFile("/v", "/v-other", "a.md")).toBeNull();
+    expect(vaultPathForWorkspaceFile("/v", "/v/Agents", "../../etc/passwd")).toBeNull();
+    expect(vaultPathForWorkspaceFile("/v", undefined, "a.md")).toBeNull();
+    expect(vaultPathForWorkspaceFile("/v", "https://github.com/org/repo", "a.md")).toBeNull();
+    expect(vaultPathForWorkspaceFile(null, "/v", "a.md")).toBeNull();
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Project } from "../api/types";
-import { mergeProjectConfig } from "./projectConfig";
+import { mergeProjectConfig, projectLaunchOverrides } from "./projectConfig";
 import { moveId, orderProjects } from "./sessionsStore";
 
 const project = (id: string, name: string): Project => ({ id, name });
@@ -43,5 +43,20 @@ describe("mergeProjectConfig", () => {
       agent_id: "ag",
       use_worktree: true,
     });
+  });
+});
+
+describe("projectLaunchOverrides", () => {
+  const config = { agent_id: "ag_codex", model: "gpt-5.5", effort: "high" };
+
+  it("sends the project's model and effort for its own agent only", () => {
+    expect(projectLaunchOverrides(config, "ag_codex")).toEqual({ model_override: "gpt-5.5", reasoning_effort: "high" });
+    expect(projectLaunchOverrides(config, "ag_claude")).toEqual({});
+    expect(projectLaunchOverrides({ model: "gpt-5.5" }, "ag_codex")).toEqual({});
+    expect(projectLaunchOverrides(undefined, "ag_codex")).toEqual({});
+  });
+
+  it("omits blank fields so the harness keeps its defaults", () => {
+    expect(projectLaunchOverrides({ agent_id: "ag", model: " ", effort: "low" }, "ag")).toEqual({ reasoning_effort: "low" });
   });
 });

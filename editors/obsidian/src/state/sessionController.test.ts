@@ -162,8 +162,71 @@ describe("SessionController", () => {
     const client = fakeClient(async () => snapshot({ pending_elicitations: [] }));
     const controller = new SessionController(client, "conv_1");
     controller.applySnapshot(snapshot(), ITEMS);
-    await controller.resolveApproval(controller.approvals[0]!, "accept");
-    expect(client.resolveElicitation).toHaveBeenCalledWith("conv_child", "elicit_1", "accept");
+    await controller.resolveApproval(controller.approvals[0]!, "accept", { allow_directories: true });
+    expect(client.resolveElicitation).toHaveBeenCalledWith("conv_child", "elicit_1", "accept", { allow_directories: true });
     expect(controller.approvals).toEqual([]);
+  });
+
+  it("offers /clear on native sessions the server can clear and follows the new session", async () => {
+    const native = (wrapper: string) => snapshot({ labels: { "omnigent.wrapper": wrapper } });
+    const client = fakeClient(async () => native("codex-native-ui"));
+    const serverInfo = vi.fn(async () => ({ session_event_types: ["clear", "message"] }));
+    const clearContext = vi.fn(async () => ({ queued: false }));
+    Object.assign(client, { serverInfo, clearContext });
+    const controller = new SessionController(client, "conv_1");
+    controller.applySnapshot(native("codex-native-ui"), ITEMS);
+    expect(controller.supportsClear).toBe(false);
+
+    await controller.loadServerInfo();
+    expect(controller.supportsClear).toBe(true);
+    controller.applySnapshot(native("some-other-wrapper"), ITEMS);
+    expect(controller.supportsClear).toBe(false);
+
+    await controller.clearContext();
+    expect(clearContext).toHaveBeenCalledWith("conv_1");
+
+    // A late event from another session's stream, or a self-target, is not a redirect.
+    controller.handleEvent({ type: "session_superseded", conversationId: "conv_other", targetConversationId: "conv_2", reason: "clear" });
+    controller.handleEvent({ type: "session_superseded", conversationId: "conv_1", targetConversationId: "conv_1", reason: "clear" });
+    expect(controller.supersededBy).toBeNull();
+    controller.handleEvent({ type: "session_superseded", conversationId: "conv_1", targetConversationId: "conv_2", reason: "clear" });
+    expect(controller.supersededBy).toBe("conv_2");
+  });
+
+  it("keeps /clear off on servers that don't list the clear control", async () => {
+    const client = fakeClient(async () => snapshot());
+    Object.assign(client, { serverInfo: vi.fn(async () => ({})) });
+    const controller = new SessionController(client, "conv_1");
+    controller.applySnapshot(snapshot({ labels: { "omnigent.wrapper": "claude-code-native-ui" } }), ITEMS);
+    await controller.loadServerInfo();
+    expect(controller.supportsClear).toBe(false);
+  });
+
+  it("says why a running session is parked", () => {
+    const controller = new SessionController(fakeClient(async () => snapshot()), "conv_1");
+    controller.applySnapshot(snapshot({ status: "running", pending_elicitations: [] }), ITEMS);
+    expect(controller.statusLabel).toBe("running");
+
+    controller.handleEvent({ type: "session_status", conversationId: "conv_1", status: "running", blockedOn: "permission prompt" });
+    expect(controller.statusLabel).toBe("waiting for approval in the console");
+    controller.handleEvent({ type: "session_status", conversationId: "conv_1", status: "running", blockedOn: "plan review" });
+    expect(controller.statusLabel).toBe("waiting in the console (plan review)");
+
+    // A prompt mirrored as a card is answered here, not in the console.
+    controller.applySnapshot(snapshot({ status: "running" }), ITEMS);
+    expect(controller.statusLabel).toBe("waiting for your approval");
+
+    controller.handleEvent({ type: "session_status", conversationId: "conv_1", status: "idle" });
+    expect(controller.statusLabel).toBe("idle");
+    expect(controller.blockedOn).toBeNull();
+  });
+
+  it("hands the agent's open-file requests to the view", () => {
+    const controller = new SessionController(fakeClient(async () => snapshot()), "conv_1");
+    controller.handleEvent({ type: "ui_open_file", path: "ignored-without-a-view.md" });
+    const opened: string[] = [];
+    controller.onOpenFileRequest = (path) => opened.push(path);
+    controller.handleEvent({ type: "ui_open_file", path: "Notes/Plan.md" });
+    expect(opened).toEqual(["Notes/Plan.md"]);
   });
 });

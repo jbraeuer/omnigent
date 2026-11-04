@@ -5,12 +5,15 @@
  * frames are keystrokes and text frames are JSON control (`resize`).
  * When the runner is on this machine, attach to its loopback listener directly
  * so keystrokes skip the server relay's round trips.
- * Server text frames carry tmux copy-mode selections for the local clipboard.
+ * Server text frames carry tmux copy-mode selections for the local clipboard and
+ * the queries tmux answers itself, which xterm must then not answer a second time.
+ * An unexpected disconnect reattaches once by itself while the session's host is online.
  */
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { Notice } from "obsidian";
 import WebSocket from "ws";
+import { parseTmuxRepliesMessage, suppressRepliesTmuxSends } from "@/components/blocks/TerminalQueryReplies";
 import { loadWebglRenderer } from "@/components/blocks/webglRenderer";
 import { copyText } from "@/lib/clipboard";
 import { hadRecentTerminalInput, parseTerminalClipboardMessage } from "@/lib/terminalClipboard";
@@ -24,6 +27,12 @@ import { probeWebSocket } from "../transport/socket";
 import type { TerminalResource } from "../api/types";
 import { closeQuietly } from "../state/sessionsStore";
 
+/** A connection that stayed open this long earns a fresh automatic reconnect. */
+const STABLE_CONNECTION_MS = 10_000;
+
+/** Status line updates; `reconnectable` asks the view to offer a manual Reconnect. */
+export type TerminalStatusListener = (message: string, reconnectable?: boolean) => void;
+
 export class TerminalPane {
   private readonly terminal: Terminal;
   private readonly fit = new FitAddon();
@@ -32,12 +41,16 @@ export class TerminalPane {
   private disposed = false;
   /** `performance.now()` of the last keystroke or mouse report; gates clipboard writes. */
   private lastInputAt = 0;
+  /** Drops xterm's replies to the queries tmux answers, once the runner lists them. */
+  private queryReplies: { dispose: () => void } | null = null;
+  /** Whether the automatic reconnect was spent since the last stable connection. */
+  private reconnectSpent = false;
 
   constructor(
     private readonly host: HTMLElement,
     private readonly client: OmnigentClient,
     private readonly sessionId: string,
-    private readonly onStatus: (message: string) => void,
+    private readonly onStatus: TerminalStatusListener,
   ) {
     const styles = getComputedStyle(document.body);
     this.terminal = new Terminal({
@@ -77,21 +90,27 @@ export class TerminalPane {
    * Attach to `terminalId` (default: the agent's own terminal UI) and return the
    * session's terminals for a picker; `readOnly` drops keystrokes server-side.
    */
-  async attach(readOnly: boolean, terminalId?: string, isRetry = false): Promise<TerminalResource[]> {
+  attach(readOnly: boolean, terminalId?: string): Promise<TerminalResource[]> {
+    this.reconnectSpent = false;
+    return this.attachTo(readOnly, terminalId, false);
+  }
+
+  /** `isReplicaRetry` marks the one keyless re-attach after a wrong-replica close. */
+  private async attachTo(readOnly: boolean, terminalId: string | undefined, isReplicaRetry: boolean): Promise<TerminalResource[]> {
     this.detach();
     let terminals: TerminalResource[];
     try {
       terminals = await this.client.listTerminals(this.sessionId);
     } catch (error) {
       if (error instanceof HttpError && /is offline/.test(error.body)) {
-        this.onStatus("The agent isn't running right now. Send it a message to start it, then open Console again.");
+        this.onStatus("The agent isn't running right now. Send it a message to start it, then reconnect.", true);
         return [];
       }
       throw error;
     }
     const target = terminals.find((terminal) => terminal.id === terminalId) ?? pickTerminal(terminals);
     if (!target) {
-      this.onStatus("This session has no terminal yet. It appears once the agent starts.");
+      this.onStatus("This session has no terminal yet. It appears once the agent starts.", true);
       return terminals;
     }
     if (this.disposed) return terminals;
@@ -103,7 +122,9 @@ export class TerminalPane {
     this.terminal.reset();
     this.socket = socket;
     socket.binaryType = "nodebuffer";
+    let openedAt: number | null = null;
     socket.on("open", () => {
+      openedAt = performance.now();
       const label = terminalLabel(target) + (direct ? ", direct" : "");
       this.onStatus(readOnly ? `Watching ${label} (read-only)` : `Attached to ${label}`);
       this.refit();
@@ -114,15 +135,17 @@ export class TerminalPane {
       else this.handleControlFrame((data as Buffer).toString("utf8"));
     });
     socket.on("close", (code, reason) => {
-      if (this.socket !== socket) return;
+      if (this.socket !== socket || this.disposed) return;
+      this.socket = null;
       // The client now dials this host keyless; re-attach once on the default replica.
-      if (code === WRONG_REPLICA_WS_CLOSE && !isRetry) {
-        void this.attach(readOnly, target.id, true).catch((error: unknown) =>
-          this.onStatus(`Could not attach: ${error instanceof Error ? error.message : String(error)}`),
+      if (code === WRONG_REPLICA_WS_CLOSE && !isReplicaRetry) {
+        void this.attachTo(readOnly, target.id, true).catch((error: unknown) =>
+          this.onStatus(`Could not attach: ${errorMessage(error)}`, true),
         );
         return;
       }
-      this.onStatus(`Terminal disconnected (${code}${reason.length ? `: ${reason.toString()}` : ""})`);
+      if (openedAt !== null && performance.now() - openedAt >= STABLE_CONNECTION_MS) this.reconnectSpent = false;
+      void this.recover(readOnly, target.id, `${code}${reason.length ? `: ${reason.toString()}` : ""}`);
     });
     socket.on("error", (error) => this.onStatus(`Terminal error: ${error.message}`));
     this.attachedId = target.id;
@@ -139,12 +162,44 @@ export class TerminalPane {
     return { socket: await this.client.openTerminal(this.sessionId, target.id, readOnly), direct: false };
   }
 
+  /**
+   * Visible for tests: after an unexpected close, reattach once while the host is
+   * online. A pane that keeps dropping (e.g. reaped while idle) is left for a manual Reconnect.
+   */
+  async recover(readOnly: boolean, terminalId: string, detail: string): Promise<void> {
+    const disconnected = `Terminal disconnected (${detail}).`;
+    if (this.reconnectSpent) {
+      this.onStatus(disconnected, true);
+      return;
+    }
+    let hostOnline = false;
+    try {
+      hostOnline = (await this.client.getSession(this.sessionId)).host_online !== false;
+    } catch {
+      // Unknown host state; leave reconnecting to the user.
+    }
+    if (this.disposed || this.socket) return;
+    if (!hostOnline) {
+      this.onStatus(`${disconnected} The session's host is offline.`, true);
+      return;
+    }
+    this.reconnectSpent = true;
+    this.onStatus("Terminal disconnected; reconnecting…");
+    try {
+      await this.attachTo(readOnly, terminalId, false);
+    } catch (error) {
+      this.onStatus(`Could not reconnect: ${errorMessage(error)}`, true);
+    }
+  }
+
   /** Id of the terminal currently attached, if any. */
   attachedId: string | null = null;
 
   detach(): void {
     closeQuietly(this.socket);
     this.socket = null;
+    this.queryReplies?.dispose();
+    this.queryReplies = null;
   }
 
   dispose(): void {
@@ -184,8 +239,18 @@ export class TerminalPane {
 
   /** Visible for tests: apply a server text frame; only recent-input clipboard writes land. */
   handleControlFrame(message: string): void {
+    const tmuxAnswers = parseTmuxRepliesMessage(message);
+    if (tmuxAnswers !== null) {
+      this.queryReplies?.dispose();
+      this.queryReplies = suppressRepliesTmuxSends(this.terminal, tmuxAnswers);
+      return;
+    }
     const text = parseTerminalClipboardMessage(message);
     if (text === null || !hadRecentTerminalInput(this.lastInputAt, performance.now())) return;
     copyText(text).catch(() => new Notice("Could not copy the terminal selection to the clipboard."));
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
