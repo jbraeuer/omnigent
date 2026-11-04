@@ -129,6 +129,19 @@ describe("SessionsStore liveness", () => {
     store.disconnect();
   });
 
+  it("drops a pushed session archived elsewhere once a re-list has included it", async () => {
+    const sockets: ReturnType<typeof fakeSocket>[] = [];
+    const store = new SessionsStore();
+    await store.connect(fakeClient([[{ id: "a" }], [{ id: "a" }, { id: "new" }], [{ id: "a" }]], sockets));
+    sockets[0]!.emit("message", Buffer.from(JSON.stringify({ type: "changed", items: [{ id: "new" }] })));
+
+    await store.refresh();
+    expect([...store.sessions.keys()].sort()).toEqual(["a", "new"]);
+    await store.refresh();
+    expect([...store.sessions.keys()]).toEqual(["a"]);
+    store.disconnect();
+  });
+
   it("replaces a socket that stopped heartbeating", async () => {
     const sockets: ReturnType<typeof fakeSocket>[] = [];
     const store = new SessionsStore();

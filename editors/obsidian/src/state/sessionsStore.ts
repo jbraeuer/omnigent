@@ -186,7 +186,11 @@ export class SessionsStore extends Observable {
     const keep = [...this.sessions.values()].filter((row) => now - (this.addedAt.get(row.id) ?? 0) < NEW_ROW_KEEPALIVE_MS);
     this.sessions.clear();
     for (const row of keep) this.sessions.set(row.id, row);
-    for (const row of sessions.data) this.sessions.set(row.id, row);
+    for (const row of sessions.data) {
+      this.sessions.set(row.id, row);
+      // Listed once, the list is authoritative: a later archive elsewhere drops the row.
+      this.addedAt.delete(row.id);
+    }
     for (const [id, at] of this.addedAt) if (now - at >= NEW_ROW_KEEPALIVE_MS) this.addedAt.delete(id);
     this.emit();
     this.sendWatch();
