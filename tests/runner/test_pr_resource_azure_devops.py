@@ -46,6 +46,13 @@ NO_CAPABILITIES = {
     "linked_pr_diff": False,
     "label_editing": False,
     "merging": False,
+    "reviewer_editing": False,
+    "comment_posting": False,
+    "review_threads": False,
+    "review_thread_replies": False,
+    "review_thread_creation": False,
+    "details_editing": False,
+    "attachment_uploads": False,
 }
 LEGACY_FIELDS = {"gh_available", "authenticated", "accounts", "selected_account"}
 CHANGES = [
