@@ -9,7 +9,8 @@ import { collectInboxItems, groupInboxEntries, type InboxItem, type InboxSource 
 import { sessionTitle } from "../api/client";
 import type { SessionListItem } from "../api/types";
 import type OmnigentPlugin from "../main";
-import { needsFullUi, renderApprovalCard } from "./approvalCard";
+import { needsFullUi } from "./approvalCard";
+import { ApprovalCards } from "./approvalCards";
 
 export const INBOX_VIEW_TYPE = "omnigent-inbox";
 
@@ -23,6 +24,9 @@ export class InboxView extends ItemView {
   private readonly sources = new Map<string, { key: string; source: InboxSource }>();
   private listEl!: HTMLElement;
   private loading = new Set<string>();
+  /** Prompts answered here; hidden until the next snapshot drops them. */
+  private answered = new Set<string>();
+  private cards = new ApprovalCards(this.app, this);
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -54,6 +58,7 @@ export class InboxView extends ItemView {
   override async onClose(): Promise<void> {
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.cards.clear();
   }
 
   /** Fetch snapshots for sessions whose pending count or update time changed, then render. */
@@ -88,7 +93,10 @@ export class InboxView extends ItemView {
 
   private render(): void {
     this.listEl.empty();
-    const approvals = collectInboxItems([...this.sources.values()].map((entry) => entry.source));
+    const approvals = collectInboxItems([...this.sources.values()].map((entry) => entry.source)).filter(
+      (item) => !this.answered.has(item.elicitation.elicitationId),
+    );
+    this.cards.retain(approvals);
     const unread = [...this.plugin.store.sessions.values()].filter(
       (row) => !row.archived && row.viewer_unread && !row.parent_session_id,
     );
@@ -114,16 +122,22 @@ export class InboxView extends ItemView {
 
   private renderApproval(item: InboxItem): void {
     const row = item.row as SessionListItem;
-    const card = this.listEl.createDiv({ cls: "omnigent-approval" });
-    card.createDiv({ cls: "omnigent-inbox-session", text: sessionTitle(row) });
-    const actions = renderApprovalCard(card, item, "Approval requested", async ({ action, content }) => {
-      await this.plugin.withClient((client) =>
-        client.resolveElicitation(item.resolveSessionId, item.elicitation.elicitationId, action, content),
-      );
-      card.remove();
+    const card = this.cards.card(item, (el, render) => {
+      el.createDiv({ cls: "omnigent-inbox-session", text: sessionTitle(row) });
+      const actions = render({
+        fallbackTitle: "Approval requested",
+        answer: async ({ action, content, meta }) => {
+          await this.plugin.withClient((client) =>
+            client.resolveElicitation(item.resolveSessionId, item.elicitation.elicitationId, action, content, meta),
+          );
+          this.answered.add(item.elicitation.elicitationId);
+          this.render();
+        },
+      });
+      const open = actions.createEl("button", { text: needsFullUi(item) ? "Answer in session" : "Open session" });
+      open.addEventListener("click", () => void this.plugin.openSession(row.id));
     });
-    const open = actions.createEl("button", { text: needsFullUi(item) ? "Answer in session" : "Open session" });
-    open.addEventListener("click", () => void this.plugin.openSession(row.id));
+    this.listEl.appendChild(card);
   }
 
   private renderUnread(session: SessionListItem): void {

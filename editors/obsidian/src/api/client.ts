@@ -99,7 +99,7 @@ export class OmnigentClient {
     if (!force && this.routing.knows(sessionId)) return Promise.resolve();
     let pending = this.hostResolves.get(sessionId);
     if (!pending) {
-      pending = this.getSession(sessionId)
+      pending = this.fetchSnapshot(sessionId)
         .then(() => undefined)
         .catch(() => undefined)
         .finally(() => this.hostResolves.delete(sessionId));
@@ -181,6 +181,16 @@ export class OmnigentClient {
 
   /** Session state and pending prompts; the transcript comes from {@link listSessionItems}. */
   async getSession(sessionId: string): Promise<SessionSnapshot> {
+    const hostKnown = this.routing.knows(sessionId);
+    const snapshot = await this.fetchSnapshot(sessionId);
+    // A keyless read may come from a replica that doesn't hold the session's
+    // pending prompts; re-read on the host's replica once the host is known.
+    if (this.routing.enabled && !hostKnown && snapshot.host_id) return this.fetchSnapshot(sessionId);
+    return snapshot;
+  }
+
+  /** One snapshot read, keyed by the session's host when it is already known. */
+  private async fetchSnapshot(sessionId: string): Promise<SessionSnapshot> {
     return this.learnSession(
       await this.request<SessionSnapshot>(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
         params: { include_items: "false" },
@@ -237,10 +247,11 @@ export class OmnigentClient {
     elicitationId: string,
     action: "accept" | "decline" | "cancel",
     content?: Record<string, unknown>,
+    meta?: Record<string, unknown>,
   ): Promise<PostEventResponse> {
     return this.request(
       `/v1/sessions/${encodeURIComponent(sessionId)}/elicitations/${encodeURIComponent(elicitationId)}/resolve`,
-      { method: "POST", body: content ? { action, content } : { action } },
+      { method: "POST", body: { action, ...(content ? { content } : {}), ...(meta ? { _meta: meta } : {}) } },
     );
   }
 

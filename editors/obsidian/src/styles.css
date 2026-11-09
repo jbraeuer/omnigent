@@ -302,6 +302,7 @@
   margin: var(--size-4-1) 0;
   color: var(--text-muted);
   font-size: var(--font-ui-small);
+  white-space: pre-line;
 }
 
 .omnigent-error {
@@ -438,4 +439,57 @@
   flex-direction: column;
   align-items: stretch;
   gap: var(--size-4-2);
+}
+
+.omnigent-approval-step-actions {
+  display: contents;
+}
+
+.omnigent-question-header {
+  display: inline-block;
+  margin-top: var(--size-4-1);
+  padding: 0 var(--size-4-1);
+  border-radius: var(--radius-s);
+  background-color: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.omnigent-question-text {
+  margin: var(--size-4-1) 0;
+}
+
+.omnigent-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-1);
+}
+
+.omnigent-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--size-4-2);
+  cursor: pointer;
+}
+
+.omnigent-question-label {
+  font-weight: var(--font-medium);
+}
+
+.omnigent-question-custom {
+  flex: 1;
+}
+
+.omnigent-question-review dt {
+  margin-top: var(--size-4-1);
+}
+
+.omnigent-question-review dd {
+  margin-left: var(--size-4-3);
+  font-weight: var(--font-semibold);
+}
+
+.omnigent-plan {
+  max-height: 40vh;
+  overflow-y: auto;
 }

@@ -6,7 +6,7 @@ describe("hostScopeForPath", () => {
     ["/v1/hosts/h%201/filesystem", { kind: "host", hostId: "h 1" }],
     ["/v1/sessions/conv_1/stream", { kind: "session", sessionId: "conv_1" }],
     ["/v1/sessions/conv_1/resources/terminals/t/attach", { kind: "session", sessionId: "conv_1" }],
-    ["/v1/sessions/conv_1", { kind: "none" }],
+    ["/v1/sessions/conv_1", { kind: "snapshot", sessionId: "conv_1" }],
     ["/v1/sessions/updates", { kind: "none" }],
     ["/v1/sessions", { kind: "none" }],
     ["/v1/projects", { kind: "none" }],

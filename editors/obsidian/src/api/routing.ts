@@ -13,16 +13,21 @@ export const WRONG_REPLICA_CODE = "wrong_replica";
 /** WebSocket close code the server uses for a wrong-replica attach. */
 export const WRONG_REPLICA_WS_CLOSE = 4400;
 
-export type HostScope = { kind: "host"; hostId: string } | { kind: "session"; sessionId: string } | { kind: "none" };
+export type HostScope =
+  | { kind: "host"; hostId: string }
+  | { kind: "session"; sessionId: string }
+  /** The bare snapshot: served by any replica, but only the host's replica knows its pending prompts. */
+  | { kind: "snapshot"; sessionId: string }
+  | { kind: "none" };
 
-/** Which host an API path is scoped to: `/v1/hosts/{id}/…` or a session sub-path `/v1/sessions/{id}/…`. */
+/** Which host an API path is scoped to: `/v1/hosts/{id}/…`, a session sub-path, or a session snapshot. */
 export function hostScopeForPath(path: string): HostScope {
   const host = /^\/v1\/hosts\/([^/?#]+)/.exec(path);
   if (host) return { kind: "host", hostId: decodeURIComponent(host[1]!) };
-  // The bare snapshot `/v1/sessions/{id}` is host-agnostic (it is how a host is resolved).
-  const session = /^\/v1\/sessions\/([^/?#]+)\/[^?#]/.exec(path);
-  if (session && session[1] !== "updates") return { kind: "session", sessionId: decodeURIComponent(session[1]!) };
-  return { kind: "none" };
+  const session = /^\/v1\/sessions\/([^/?#]+)(\/[^?#])?/.exec(path);
+  if (!session || session[1] === "updates") return { kind: "none" };
+  const sessionId = decodeURIComponent(session[1]!);
+  return session[2] ? { kind: "session", sessionId } : { kind: "snapshot", sessionId };
 }
 
 /** Whether an error body is the server's structured wrong-replica signal. */
@@ -54,7 +59,7 @@ export class HostRouting {
 
   hostFor(scope: HostScope): string | null {
     if (scope.kind === "host") return scope.hostId;
-    if (scope.kind === "session") return this.sessionHosts.get(scope.sessionId) ?? null;
+    if (scope.kind === "session" || scope.kind === "snapshot") return this.sessionHosts.get(scope.sessionId) ?? null;
     return null;
   }
 

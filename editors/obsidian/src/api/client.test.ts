@@ -70,6 +70,7 @@ describe("OmnigentClient", () => {
     await client.sendMessage("conv 1", [{ type: "input_text", text: "hi" }]);
     await client.interrupt("conv 1");
     await client.resolveElicitation("conv_c", "elicit_1", "decline");
+    await client.resolveElicitation("conv_c", "elicit_2", "accept", { q: "a" }, { native_delivery_attempt: "a1" });
     await client.updateSession("conv_1", { project_id: "" });
     expect(seen.map(({ method, url, body }) => ({ method, url, body }))).toEqual([
       {
@@ -87,6 +88,11 @@ describe("OmnigentClient", () => {
         method: "POST",
         url: "/omni/v1/sessions/conv_c/elicitations/elicit_1/resolve",
         body: { action: "decline" },
+      },
+      {
+        method: "POST",
+        url: "/omni/v1/sessions/conv_c/elicitations/elicit_2/resolve",
+        body: { action: "accept", content: { q: "a" }, _meta: { native_delivery_attempt: "a1" } },
       },
       { method: "PATCH", url: "/omni/v1/sessions/conv_1", body: { project_id: "" } },
     ]);
@@ -108,6 +114,16 @@ describe("OmnigentClient", () => {
       ["/api/2.0/omnigent/v1/sessions/conv_1/items?limit=200&order=desc", "h1"],
       ["/api/2.0/omnigent/v1/sessions/conv_1/resources/terminals", "h1"],
     ]);
+  });
+
+  it("re-reads the snapshot on the host's replica, which holds its pending prompts", async () => {
+    const { base, seen } = await serve((_req, entry) => ({
+      body: { id: "conv_1", host_id: "h1", pending_elicitations: entry.sliceKey === "h1" ? [{ elicitation_id: "e1" }] : [] },
+    }));
+    const client = new OmnigentClient(base, new CountingAuth());
+    expect((await client.getSession("conv_1")).pending_elicitations).toHaveLength(1);
+    await client.getSession("conv_1");
+    expect(seen.map((entry) => entry.sliceKey)).toEqual([undefined, "h1", "h1"]);
   });
 
   it("re-addresses keyless once when a keyed request reaches the wrong replica", async () => {

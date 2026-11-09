@@ -13,7 +13,8 @@ import {
 import type { InboxItem } from "@/lib/inbox";
 import type OmnigentPlugin from "../main";
 import { SessionController } from "../state/sessionController";
-import { needsFullUi, renderApprovalCard } from "./approvalCard";
+import { needsFullUi } from "./approvalCard";
+import { ApprovalCards } from "./approvalCards";
 import { NotePickerModal } from "./notePickerModal";
 import { renderBlocks } from "./renderBlocks";
 import { terminalLabel } from "../api/terminals";
@@ -55,6 +56,7 @@ export class SessionView extends ItemView {
   private terminalSelect!: HTMLSelectElement;
   private reconnectButton!: HTMLButtonElement;
   private approvalsEl!: HTMLElement;
+  private approvalCards = new ApprovalCards(this.app, this);
   private errorEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private permissionSelect!: HTMLSelectElement;
@@ -207,6 +209,7 @@ export class SessionView extends ItemView {
     this.unsubscribe = null;
     this.controller?.stop();
     this.controller = null;
+    this.approvalCards.clear();
     this.terminal?.dispose();
     this.terminal = null;
     this.renderedBlocks = null;
@@ -406,16 +409,21 @@ export class SessionView extends ItemView {
   }
 
   private renderApprovals(approvals: InboxItem[]): void {
-    this.approvalsEl.empty();
+    this.approvalCards.retain(approvals);
     for (const item of approvals) {
-      const card = this.approvalsEl.createDiv({ cls: "omnigent-approval" });
-      const actions = renderApprovalCard(card, item, "The agent is asking for approval", async (answer) => {
-        await this.controller?.resolveApproval(item, answer.action, answer.content);
+      const card = this.approvalCards.card(item, (_card, render) => {
+        const actions = render({
+          fallbackTitle: "The agent is asking for approval",
+          answer: async (answer) => {
+            await this.controller?.resolveApproval(item, answer.action, answer.content, answer.meta);
+          },
+        });
+        if (needsFullUi(item)) {
+          const open = actions.createEl("button", { cls: "mod-cta", text: "Answer in Omnigent" });
+          open.addEventListener("click", () => this.plugin.openInOmnigent(`/c/${encodeURIComponent(item.row.id)}`));
+        }
       });
-      if (needsFullUi(item)) {
-        const open = actions.createEl("button", { cls: "mod-cta", text: "Answer in Omnigent" });
-        open.addEventListener("click", () => this.plugin.openInOmnigent(`/c/${encodeURIComponent(item.row.id)}`));
-      }
+      this.approvalsEl.appendChild(card);
     }
   }
 

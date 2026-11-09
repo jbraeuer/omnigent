@@ -163,7 +163,28 @@ describe("SessionController", () => {
     const controller = new SessionController(client, "conv_1");
     controller.applySnapshot(snapshot(), ITEMS);
     await controller.resolveApproval(controller.approvals[0]!, "accept", { allow_directories: true });
-    expect(client.resolveElicitation).toHaveBeenCalledWith("conv_child", "elicit_1", "accept", { allow_directories: true });
+    expect(client.resolveElicitation).toHaveBeenCalledWith("conv_child", "elicit_1", "accept", { allow_directories: true }, undefined);
+    expect(controller.approvals).toEqual([]);
+  });
+
+  it("keeps a question from the live stream that a snapshot missed until it resolves", () => {
+    const controller = new SessionController(fakeClient(async () => snapshot({ pending_elicitations: [] })), "conv_1");
+    controller.applySnapshot(snapshot({ status: "running", pending_elicitations: [] }), ITEMS);
+    const questions = [{ question: "Rollout?", multiSelect: false, options: [{ label: "You first" }] }];
+    controller.handleEvent({
+      type: "elicitation_request",
+      elicitationId: "elicit_q",
+      message: "",
+      phase: "",
+      policyName: "",
+      contentPreview: "",
+      requestedSchema: {},
+      askUserQuestion: { questions },
+    } as never);
+    controller.applySnapshot(snapshot({ status: "running", pending_elicitations: [] }), ITEMS);
+    expect(controller.approvals.map((item) => [item.elicitation.elicitationId, item.resolveSessionId])).toEqual([["elicit_q", "conv_1"]]);
+    expect(controller.statusLabel).toBe("waiting for your answer");
+    controller.handleEvent({ type: "elicitation_resolved", elicitationId: "elicit_q" });
     expect(controller.approvals).toEqual([]);
   });
 

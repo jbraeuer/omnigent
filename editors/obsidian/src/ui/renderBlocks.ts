@@ -4,8 +4,9 @@
  * collapsible details, and status lines for errors, retries and policy denials.
  */
 import { App, Component, MarkdownRenderer } from "obsidian";
-import { isTextBlock, type AnyBlock, type ToolExecution } from "@/lib/blocks";
-import { isSystemUserContent } from "@/lib/systemMessage";
+import { askUserQuestionPayloadOf, exitPlanModePlan } from "@/lib/askUserQuestion";
+import { isTextBlock, slashCommandDisplayName, type AnyBlock, type ElicitationBlock, type ToolExecution } from "@/lib/blocks";
+import { isSystemUserContent, stripAutomationContext } from "@/lib/systemMessage";
 import { splitContext } from "../vault/context";
 
 const MAX_TOOL_OUTPUT_CHARS = 20_000;
@@ -89,10 +90,12 @@ export function renderBlocks(ctx: RenderContext, container: HTMLElement, blocks:
     switch (block.type) {
       case "user_message": {
         if (isSystemUserContent(block.content)) break;
-        const text = block.content
-          .filter(isTextBlock)
-          .map((part) => part.text)
-          .join("\n\n");
+        const text = stripAutomationContext(
+          block.content
+            .filter(isTextBlock)
+            .map((part) => part.text)
+            .join("\n\n"),
+        );
         const { text: withoutReminders, reminders } = splitSystemReminders(text);
         for (const reminder of reminders) {
           details(container, systemReminderTitle(reminder), "omnigent-system-reminder", (body) =>
@@ -140,16 +143,13 @@ export function renderBlocks(ctx: RenderContext, container: HTMLElement, blocks:
         break;
       }
       case "slash_command":
-        container.createDiv({ cls: "omnigent-status", text: `/${block.name} ${block.arguments}`.trim() });
-        break;
-      case "elicitation":
         container.createDiv({
           cls: "omnigent-status",
-          text:
-            block.status === "pending"
-              ? `Approval requested: ${block.message}`
-              : `Approval ${block.response?.action ?? "answered"}: ${block.message}`,
+          text: `/${slashCommandDisplayName(block.name)} ${block.arguments}`.trim(),
         });
+        break;
+      case "elicitation":
+        container.createDiv({ cls: "omnigent-status", text: elicitationSummary(block) });
         break;
       case "error":
         container.createDiv({ cls: ["omnigent-status", "omnigent-error"], text: block.title ?? block.message });
@@ -174,4 +174,28 @@ export function renderBlocks(ctx: RenderContext, container: HTMLElement, blocks:
         break;
     }
   }
+}
+
+/** Transcript line for a prompt; answered questions list each answer. */
+export function elicitationSummary(block: ElicitationBlock): string {
+  const action = block.response?.action;
+  const questions = askUserQuestionPayloadOf(block)?.questions;
+  if (questions) {
+    if (block.status === "pending") return "Question asked (answer it above)";
+    if (action !== "accept") return `Question ${action ?? "answered"}`;
+    const content = block.response?.content ?? {};
+    const lines = questions.map((question) => {
+      const answer = content[question.id || question.question];
+      const text = Array.isArray(answer) ? answer.join(", ") : typeof answer === "string" ? answer : "—";
+      return `${question.question} → ${text}`;
+    });
+    return ["Answered:", ...lines].join("\n");
+  }
+  if (exitPlanModePlan(block.exitPlanMode)) {
+    if (block.status === "pending") return "Plan ready for review";
+    return action === "accept" ? "Plan approved" : "Plan rejected";
+  }
+  return block.status === "pending"
+    ? `Approval requested: ${block.message}`
+    : `Approval ${action ?? "answered"}: ${block.message}`;
 }

@@ -8,10 +8,11 @@
  * which triggers a debounced snapshot refresh. This follows the server's
  * reconnect contract (subscribe first, then snapshot) without client-side dedupe.
  */
+import { askUserQuestionPayloadOf } from "@/lib/askUserQuestion";
 import { isTextBlock, type AnyBlock } from "@/lib/blocks";
 import { claudePermissionModeFromSession, isClaudeNativeSession } from "@/lib/claudePermissionMode";
 import type { ConversationItem } from "@/lib/conversationItems";
-import type { StreamEvent } from "@/lib/events";
+import { TERMINAL_PROMPT_BLOCKED_ON, type StreamEvent } from "@/lib/events";
 import { collectInboxItems, type InboxItem } from "@/lib/inbox";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
 import { nativeCodingAgentForWrapper, WRAPPER_LABEL_KEY } from "@/lib/nativeCodingAgents";
@@ -53,6 +54,8 @@ export class SessionController extends Observable {
   snapshot: SessionSnapshot | null = null;
   blocks: AnyBlock[] = [];
   approvals: InboxItem[] = [];
+  /** Prompts seen on the live stream; kept until resolved, since a snapshot can miss them. */
+  private liveApprovals = new Map<string, InboxItem>();
   /** Assistant text streamed since the last committed message. */
   liveText = "";
   /** Messages sent but not yet visible in the snapshot. */
@@ -97,8 +100,13 @@ export class SessionController extends Observable {
   /** Header status: why a running session isn't moving, else its status. */
   get statusLabel(): string {
     if (this.status !== "running") return this.status;
-    if (this.approvals.length > 0) return "waiting for your approval";
+    if (this.approvals.length > 0) {
+      return this.approvals.some((item) => askUserQuestionPayloadOf(item.elicitation) !== null)
+        ? "waiting for your answer"
+        : "waiting for your approval";
+    }
     if (this.blockedOn === "permission prompt") return "waiting for approval in the console";
+    if (this.blockedOn === TERMINAL_PROMPT_BLOCKED_ON) return "may need input in the console";
     if (this.blockedOn) return `waiting in the console (${this.blockedOn})`;
     return this.status;
   }
@@ -185,8 +193,14 @@ export class SessionController extends Observable {
     }
   }
 
-  async resolveApproval(item: InboxItem, action: "accept" | "decline", content?: Record<string, unknown>): Promise<void> {
-    await this.client.resolveElicitation(item.resolveSessionId, item.elicitation.elicitationId, action, content);
+  async resolveApproval(
+    item: InboxItem,
+    action: "accept" | "decline",
+    content?: Record<string, unknown>,
+    meta?: Record<string, unknown>,
+  ): Promise<void> {
+    await this.client.resolveElicitation(item.resolveSessionId, item.elicitation.elicitationId, action, content, meta);
+    this.liveApprovals.delete(item.elicitation.elicitationId);
     this.approvals = this.approvals.filter((candidate) => candidate !== item);
     this.emit();
     this.scheduleRefresh();
@@ -223,12 +237,9 @@ export class SessionController extends Observable {
     this.snapshot = snapshot;
     this.olderItemsExist = olderItemsExist;
     this.blocks = itemsToBlocks(items);
-    this.approvals = collectInboxItems([
-      {
-        row: snapshot as never,
-        pendingElicitations: snapshot.pending_elicitations ?? [],
-      },
-    ]);
+    this.approvals = this.withLiveApprovals(
+      collectInboxItems([{ row: snapshot as never, pendingElicitations: snapshot.pending_elicitations ?? [] }]),
+    );
     if (snapshot.status) this.status = snapshot.status;
     if (this.status !== "running") this.blockedOn = null;
     this.permissionMode = permissionModeOf(snapshot) ?? this.permissionMode;
@@ -236,6 +247,12 @@ export class SessionController extends Observable {
     this.pendingMessages = this.pendingMessages.filter((message) => !committedUserTexts.has(message));
     this.error = null;
     this.emit();
+  }
+
+  /** `fromSnapshot` plus live prompts it lacks (a snapshot served by another replica can miss them). */
+  private withLiveApprovals(fromSnapshot: InboxItem[]): InboxItem[] {
+    const ids = new Set(fromSnapshot.map((item) => item.elicitation.elicitationId));
+    return [...fromSnapshot, ...[...this.liveApprovals.values()].filter((item) => !ids.has(item.elicitation.elicitationId))];
   }
 
   /** Visible for tests: react to one live stream event. */
@@ -270,6 +287,25 @@ export class SessionController extends Observable {
         return;
       case "ui_open_file":
         this.onOpenFileRequest?.(event.path);
+        return;
+      case "elicitation_request":
+        if (this.snapshot) {
+          const item: InboxItem = {
+            row: this.snapshot as never,
+            resolveSessionId: event.targetSessionId ?? this.sessionId,
+            elicitation: event,
+          };
+          this.liveApprovals.set(event.elicitationId, item);
+          this.approvals = this.withLiveApprovals(this.approvals);
+          this.emit();
+        }
+        this.scheduleRefresh();
+        return;
+      case "elicitation_resolved":
+        this.liveApprovals.delete(event.elicitationId);
+        this.approvals = this.approvals.filter((item) => item.elicitation.elicitationId !== event.elicitationId);
+        this.emit();
+        this.scheduleRefresh();
         return;
       case "session_superseded":
         // Live-only; a later open shows the notice the server appended instead.

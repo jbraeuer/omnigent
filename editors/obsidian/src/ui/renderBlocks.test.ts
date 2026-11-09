@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { splitSystemReminders, systemReminderTitle } from "./renderBlocks";
+import type { ElicitationBlock } from "@/lib/blocks";
+import { elicitationSummary, splitSystemReminders, systemReminderTitle } from "./renderBlocks";
 
 describe("splitSystemReminders", () => {
   it("moves injected reminders out of the typed text", () => {
@@ -22,5 +23,26 @@ describe("systemReminderTitle", () => {
     expect(systemReminderTitle("Attribution note\nmore")).toBe("System reminder: Attribution note");
     expect(systemReminderTitle("x".repeat(200))).toHaveLength("System reminder: ".length + 80);
     expect(systemReminderTitle("")).toBe("System reminder");
+  });
+});
+
+describe("elicitationSummary", () => {
+  const block = (extra: Partial<ElicitationBlock>) =>
+    ({ type: "elicitation", message: "Claude wants to call AskUserQuestion", contentPreview: "", status: "resolved", response: null, ...extra }) as ElicitationBlock;
+  const questions = [
+    { question: "Prefix?", multiSelect: false, options: [{ label: "Every DM" }] },
+    { question: "Groups?", multiSelect: true, options: [{ label: "A" }, { label: "B" }] },
+  ];
+
+  it("lists each submitted answer", () => {
+    const summary = elicitationSummary(
+      block({ askUserQuestion: { questions }, response: { action: "accept", content: { "Prefix?": "Every DM", "Groups?": ["A", "B"] } } }),
+    );
+    expect(summary).toBe("Answered:\nPrefix? → Every DM\nGroups? → A, B");
+  });
+
+  it("names plan reviews and plain approvals", () => {
+    expect(elicitationSummary(block({ exitPlanMode: { plan: "x" }, response: { action: "decline" } }))).toBe("Plan rejected");
+    expect(elicitationSummary(block({ message: "Run ls", response: { action: "accept" } }))).toBe("Approval accept: Run ls");
   });
 });
