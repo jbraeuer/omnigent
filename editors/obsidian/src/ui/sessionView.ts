@@ -10,7 +10,9 @@ import {
   claudePermissionModeLabel,
   isSwitchableClaudePermissionMode,
 } from "@/lib/claudePermissionMode";
+import { attachmentFilename, clipboardFiles, validateAttachments } from "@/lib/attachments";
 import type { InboxItem } from "@/lib/inbox";
+import type { UploadFile } from "../api/client";
 import type OmnigentPlugin from "../main";
 import { SessionController } from "../state/sessionController";
 import { needsFullUi } from "./approvalCard";
@@ -63,6 +65,7 @@ export class SessionView extends ItemView {
   private attachedEl!: HTMLElement;
   /** Vault paths attached to the next message besides `[[links]]` in its text. */
   private attachedPaths: string[] = [];
+  private attachedFiles: File[] = [];
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -144,6 +147,7 @@ export class SessionView extends ItemView {
       cls: "omnigent-input",
       attr: { placeholder: "Message the agent. Use [[note]] to include a note.", rows: "3" },
     });
+    this.registerDomEvent(this.inputEl, "paste", (event: ClipboardEvent) => this.pasteFiles(event));
     this.registerDomEvent(this.inputEl, "keydown", (event: KeyboardEvent) => {
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
@@ -182,6 +186,18 @@ export class SessionView extends ItemView {
   /** Attach a vault path to the next message. */
   attach(path: string): void {
     if (!this.attachedPaths.includes(path)) this.attachedPaths.push(path);
+    this.renderAttached();
+  }
+
+  /** Attach pasted files (e.g. screenshots) instead of letting the textarea drop them. */
+  private pasteFiles(event: ClipboardEvent): void {
+    const pasted = clipboardFiles(event.clipboardData);
+    if (pasted.length === 0) return;
+    event.preventDefault();
+    const { accepted, errors } = validateAttachments(pasted);
+    for (const error of errors) new Notice(error);
+    if (accepted.length === 0) return;
+    this.attachedFiles = [...this.attachedFiles, ...accepted];
     this.renderAttached();
   }
 
@@ -338,7 +354,7 @@ export class SessionView extends ItemView {
     for (const message of controller.pendingMessages) {
       this.pendingEl.createDiv({
         cls: ["omnigent-message", "omnigent-message-user", "omnigent-sending"],
-        text: splitContext(message).text,
+        text: splitContext(message).text || "Sending attachment…",
       });
     }
     this.renderPermissionMode(controller);
@@ -429,6 +445,18 @@ export class SessionView extends ItemView {
 
   private renderAttached(): void {
     this.attachedEl.empty();
+    for (const file of this.attachedFiles) {
+      const name = attachmentFilename(file);
+      const chip = this.attachedEl.createDiv({ cls: "omnigent-chip" });
+      setIcon(chip.createSpan(), file.type.startsWith("image/") ? "image" : "paperclip");
+      chip.createSpan({ text: name });
+      const remove = chip.createSpan({ cls: "omnigent-chip-remove", attr: { "aria-label": `Remove ${name}` } });
+      setIcon(remove, "x");
+      remove.addEventListener("click", () => {
+        this.attachedFiles = this.attachedFiles.filter((candidate) => candidate !== file);
+        this.renderAttached();
+      });
+    }
     for (const path of this.attachedPaths) {
       const chip = this.attachedEl.createDiv({ cls: "omnigent-chip", text: path });
       const remove = chip.createSpan({ cls: "omnigent-chip-remove", attr: { "aria-label": `Remove ${path}` } });
@@ -443,7 +471,8 @@ export class SessionView extends ItemView {
   private async submit(): Promise<void> {
     const controller = this.controller;
     const text = this.inputEl.value.trim();
-    if (!controller || !text) return;
+    const files = this.attachedFiles;
+    if (!controller || (!text && files.length === 0)) return;
     if (text === "/clear" && controller.supportsClear) {
       this.inputEl.value = "";
       // The controller shows a failure; restore the command so it can be retried.
@@ -453,13 +482,16 @@ export class SessionView extends ItemView {
     const attached = this.attachedPaths;
     this.inputEl.value = "";
     this.attachedPaths = [];
+    this.attachedFiles = [];
     this.renderAttached();
     try {
-      await controller.send(await this.plugin.composeMessage(text, attached));
+      const uploads = await Promise.all(files.map(toUploadFile));
+      await controller.send(await this.plugin.composeMessage(text, attached), uploads);
     } catch {
       // Restore the draft so nothing typed is lost; the controller shows the error.
       this.inputEl.value = text;
       this.attachedPaths = attached;
+      this.attachedFiles = files;
       this.renderAttached();
     }
   }
@@ -471,4 +503,8 @@ export class SessionView extends ItemView {
       new Notice(`Could not stop the agent: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+}
+
+async function toUploadFile(file: File): Promise<UploadFile> {
+  return { name: attachmentFilename(file), type: file.type, data: new Uint8Array(await file.arrayBuffer()) };
 }

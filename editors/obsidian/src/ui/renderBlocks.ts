@@ -5,7 +5,14 @@
  */
 import { App, Component, MarkdownRenderer } from "obsidian";
 import { askUserQuestionPayloadOf, exitPlanModePlan } from "@/lib/askUserQuestion";
-import { isTextBlock, slashCommandDisplayName, type AnyBlock, type ElicitationBlock, type ToolExecution } from "@/lib/blocks";
+import {
+  isTextBlock,
+  slashCommandDisplayName,
+  type AnyBlock,
+  type ElicitationBlock,
+  type MessageContentBlock,
+  type ToolExecution,
+} from "@/lib/blocks";
 import { isSystemUserContent, stripAutomationContext } from "@/lib/systemMessage";
 import { splitContext } from "../vault/context";
 
@@ -25,6 +32,13 @@ function truncate(text: string): string {
   return text.length > MAX_TOOL_OUTPUT_CHARS
     ? `${text.slice(0, MAX_TOOL_OUTPUT_CHARS)}\n… (${text.length - MAX_TOOL_OUTPUT_CHARS} more characters)`
     : text;
+}
+
+/** Names of the images and files attached to a user message, e.g. `["image.png"]`. */
+export function attachmentNames(content: readonly MessageContentBlock[]): string[] {
+  return content.flatMap((part) =>
+    part.type === "input_image" || part.type === "input_file" ? [part.filename || (part.type === "input_image" ? "image" : "file")] : [],
+  );
 }
 
 function stringify(value: unknown): string {
@@ -101,6 +115,13 @@ export function renderBlocks(ctx: RenderContext, container: HTMLElement, blocks:
           details(container, systemReminderTitle(reminder), "omnigent-system-reminder", (body) =>
             markdown(ctx, body, reminder, "omnigent-message-context"),
           );
+        }
+        const attachments = attachmentNames(block.content);
+        if (attachments.length > 0) {
+          container.createDiv({
+            cls: ["omnigent-message", "omnigent-message-user", "omnigent-message-attachments"],
+            text: `Attached: ${attachments.join(", ")}`,
+          });
         }
         if (!withoutReminders.trim()) break;
         const { text: typed, context, notePaths } = splitContext(withoutReminders);

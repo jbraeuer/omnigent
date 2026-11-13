@@ -9,7 +9,15 @@ import type { ConversationItem } from "@/lib/conversationItems";
 import type { StreamEvent } from "@/lib/events";
 import { parseSseStream, type SseStreamResult } from "@/lib/sse";
 import { isWorkspaceHostedUrl, type AuthProvider } from "../auth/auth";
-import { HttpError, joinUrl, openByteStream, requestJson, type Headers, type RequestOptions } from "../transport/http";
+import {
+  HttpError,
+  joinUrl,
+  multipartFileBody,
+  openByteStream,
+  requestJson,
+  type Headers,
+  type RequestOptions,
+} from "../transport/http";
 import { HostRouting, WRONG_REPLICA_WS_CLOSE, hostScopeForPath, isWrongReplicaBody } from "./routing";
 import {
   listData,
@@ -38,6 +46,23 @@ export interface ListSessionsOptions {
 export interface InputText {
   type: "input_text";
   text: string;
+}
+
+/** An uploaded session file referenced from a user message. */
+export interface InputAttachment {
+  type: "input_image" | "input_file";
+  file_id: string;
+  filename: string;
+}
+
+export type InputContent = InputText | InputAttachment;
+
+/** File bytes to upload, e.g. a pasted screenshot. */
+export interface UploadFile {
+  name: string;
+  /** MIME type, e.g. `"image/png"`; empty when unknown. */
+  type: string;
+  data: Uint8Array;
 }
 
 export class OmnigentClient {
@@ -220,7 +245,20 @@ export class OmnigentClient {
     return this.request(`/v1/sessions/${encodeURIComponent(sessionId)}`, { method: "PATCH", body: patch });
   }
 
-  sendMessage(sessionId: string, content: InputText[]): Promise<PostEventResponse> {
+  /** Upload a file to the session and return the content block that references it. */
+  async uploadFile(sessionId: string, file: UploadFile): Promise<InputAttachment> {
+    const resource = await this.request<{ id: string; name?: string; metadata?: { filename?: string } }>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/resources/files`,
+      { method: "POST", body: multipartFileBody("file", file.name, file.type, file.data), timeoutMs: 90_000 },
+    );
+    return {
+      type: file.type.startsWith("image/") ? "input_image" : "input_file",
+      file_id: resource.id,
+      filename: resource.metadata?.filename ?? resource.name ?? file.name,
+    };
+  }
+
+  sendMessage(sessionId: string, content: InputContent[]): Promise<PostEventResponse> {
     return this.postEvent(sessionId, { type: "message", data: { role: "user", content } });
   }
 

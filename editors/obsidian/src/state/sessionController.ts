@@ -17,7 +17,7 @@ import { collectInboxItems, type InboxItem } from "@/lib/inbox";
 import { itemsToBlocks } from "@/lib/itemsToBlocks";
 import { nativeCodingAgentForWrapper, WRAPPER_LABEL_KEY } from "@/lib/nativeCodingAgents";
 import type { SseStreamResult } from "@/lib/sse";
-import type { OmnigentClient } from "../api/client";
+import type { InputContent, OmnigentClient, UploadFile } from "../api/client";
 import type { SessionSnapshot, SessionStatus } from "../api/types";
 import { Observable } from "./observable";
 
@@ -147,13 +147,20 @@ export class SessionController extends Observable {
     this.refreshTimer = null;
   }
 
-  async send(rawText: string): Promise<void> {
+  /** Post a user message; `files` are uploaded first and sent as image/file blocks. */
+  async send(rawText: string, files: readonly UploadFile[] = []): Promise<void> {
     const text = rawText.trim();
     this.pendingMessages = [...this.pendingMessages, text];
     this.error = null;
     this.emit();
     try {
-      await this.client.sendMessage(this.sessionId, [{ type: "input_text", text }]);
+      const content: InputContent[] = [];
+      for (const file of files) {
+        // Sequential, so a failed upload stops before later ones are stored.
+        content.push(await this.client.uploadFile(this.sessionId, file));
+      }
+      if (text || content.length === 0) content.unshift({ type: "input_text", text });
+      await this.client.sendMessage(this.sessionId, content);
     } catch (error) {
       this.pendingMessages = this.pendingMessages.filter((message) => message !== text);
       this.fail(error);
@@ -402,7 +409,10 @@ function userTexts(blocks: AnyBlock[]): string[] {
   const texts: string[] = [];
   for (const block of blocks) {
     if (block.type !== "user_message") continue;
-    for (const part of block.content) if (isTextBlock(part)) texts.push(part.text.trim());
+    const parts = block.content.filter(isTextBlock);
+    // An attachment-only message matches the empty pending text it was sent with.
+    if (parts.length === 0) texts.push("");
+    for (const part of parts) texts.push(part.text.trim());
   }
   return texts;
 }

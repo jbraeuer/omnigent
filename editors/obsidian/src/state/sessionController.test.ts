@@ -47,6 +47,11 @@ function fakeClient(getSession: () => Promise<SessionSnapshot>): OmnigentClient 
     getSession: vi.fn(getSession),
     listSessionItems: vi.fn(async () => ({ items: ITEMS, hasMore: false })),
     sendMessage: vi.fn(async () => ({ queued: true })),
+    uploadFile: vi.fn(async (_sessionId: string, file: { name: string }) => ({
+      type: "input_image",
+      file_id: `file_${file.name}`,
+      filename: file.name,
+    })),
     resolveElicitation: vi.fn(async () => ({ queued: true })),
   } as unknown as OmnigentClient;
 }
@@ -73,6 +78,38 @@ describe("SessionController", () => {
     expect(client.sendMessage).toHaveBeenCalledWith("conv_1", [{ type: "input_text", text: "Summarize [[Roadmap]]" }]);
     expect(controller.pendingMessages).toEqual(["Summarize [[Roadmap]]"]);
     await vi.advanceTimersByTimeAsync(300);
+    expect(controller.pendingMessages).toEqual([]);
+  });
+
+  it("uploads pasted images and sends them after the text", async () => {
+    const client = fakeClient(async () => snapshot());
+    const controller = new SessionController(client, "conv_1");
+    const image = { name: "image.png", type: "image/png", data: new Uint8Array([1]) };
+    await controller.send("Add these colors", [image]);
+    expect(client.uploadFile).toHaveBeenCalledWith("conv_1", image);
+    expect(client.sendMessage).toHaveBeenCalledWith("conv_1", [
+      { type: "input_text", text: "Add these colors" },
+      { type: "input_image", file_id: "file_image.png", filename: "image.png" },
+    ]);
+  });
+
+  it("sends an image-only message without an empty text block", async () => {
+    const client = fakeClient(async () => snapshot());
+    const controller = new SessionController(client, "conv_1");
+    await controller.send("", [{ name: "image.png", type: "image/png", data: new Uint8Array([1]) }]);
+    expect(client.sendMessage).toHaveBeenCalledWith("conv_1", [
+      { type: "input_image", file_id: "file_image.png", filename: "image.png" },
+    ]);
+  });
+
+  it("does not send the message when an upload fails", async () => {
+    const client = fakeClient(async () => snapshot());
+    (client.uploadFile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Unsupported attachment type"));
+    const controller = new SessionController(client, "conv_1");
+    await expect(controller.send("hi", [{ name: "a.bin", type: "", data: new Uint8Array([1]) }])).rejects.toThrow(
+      "Unsupported attachment type",
+    );
+    expect(client.sendMessage).not.toHaveBeenCalled();
     expect(controller.pendingMessages).toEqual([]);
   });
 

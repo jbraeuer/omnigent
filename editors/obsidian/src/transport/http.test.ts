@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseSseStream } from "@/lib/sse";
-import { HttpError, joinUrl, openByteStream, requestJson, summarizeErrorBody } from "./http";
+import { HttpError, joinUrl, multipartFileBody, openByteStream, requestJson, summarizeErrorBody } from "./http";
 
 let server: Server | null = null;
 
@@ -69,6 +69,30 @@ describe("requestJson", () => {
     expect(error).toBeInstanceOf(HttpError);
     expect((error as HttpError).status).toBe(status);
     expect((error as HttpError).message).toContain("nope");
+  });
+});
+
+describe("multipartFileBody", () => {
+  it("posts one file part with its bytes and content type", async () => {
+    let seen: { contentType?: string; body: Buffer } | null = null;
+    const base = await serve((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        seen = { contentType: req.headers["content-type"], body: Buffer.concat(chunks) };
+        res.end('{"id":"file_1"}');
+      });
+    });
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+    await requestJson(joinUrl(base, "/v1/upload"), {
+      method: "POST",
+      body: multipartFileBody("file", 'shot "1".png', "image/png", bytes),
+    });
+    const boundary = /boundary=(\S+)/.exec(seen!.contentType ?? "")![1]!;
+    expect(seen!.contentType).toBe(`multipart/form-data; boundary=${boundary}`);
+    const head = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="shot _1_.png"\r\nContent-Type: image/png\r\n\r\n`;
+    const tail = `\r\n--${boundary}--\r\n`;
+    expect(seen!.body.equals(Buffer.concat([Buffer.from(head), bytes, Buffer.from(tail)]))).toBe(true);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ElicitationBlock } from "@/lib/blocks";
-import { elicitationSummary, splitSystemReminders, systemReminderTitle } from "./renderBlocks";
+import { attachmentNames, elicitationSummary, splitSystemReminders, systemReminderTitle } from "./renderBlocks";
 
 describe("splitSystemReminders", () => {
   it("moves injected reminders out of the typed text", () => {
@@ -44,5 +44,18 @@ describe("elicitationSummary", () => {
   it("names plan reviews and plain approvals", () => {
     expect(elicitationSummary(block({ exitPlanMode: { plan: "x" }, response: { action: "decline" } }))).toBe("Plan rejected");
     expect(elicitationSummary(block({ message: "Run ls", response: { action: "accept" } }))).toBe("Approval accept: Run ls");
+  });
+});
+
+describe("attachmentNames", () => {
+  it("names attached images and files, skipping text", () => {
+    expect(
+      attachmentNames([
+        { type: "input_text", text: "Add these colors" },
+        { type: "input_image", file_id: "file_1", filename: "calendar.png" },
+        { type: "input_image", image_url: "data:image/png;base64,AA==" },
+        { type: "input_file", file_id: "file_2", filename: "notes.pdf" },
+      ]),
+    ).toEqual(["calendar.png", "image", "notes.pdf"]);
   });
 });

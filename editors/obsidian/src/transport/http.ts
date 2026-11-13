@@ -14,7 +14,7 @@ export type Headers = Record<string, string>;
 export interface RequestOptions {
   method?: string;
   headers?: Headers;
-  /** JSON-serialized when set. */
+  /** JSON-serialized when set; a {@link RawBody} is sent as-is. */
   body?: unknown;
   signal?: AbortSignal;
   /** Time allowed until response headers arrive, e.g. `15_000`. */
@@ -34,6 +34,26 @@ export class HttpError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+
+/** A request body sent verbatim with its own content type, e.g. multipart form data. */
+export class RawBody {
+  constructor(
+    readonly data: Uint8Array,
+    readonly contentType: string,
+  ) {}
+}
+
+/** A `multipart/form-data` body with one file part, e.g. field `file` for an upload. */
+export function multipartFileBody(field: string, filename: string, contentType: string, data: Uint8Array): RawBody {
+  const boundary = `----omnigent${crypto.randomUUID().replace(/-/g, "")}`;
+  const quoted = filename.replace(/["\\\r\n]/g, "_");
+  const head = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="${field}"; filename="${quoted}"\r\n` +
+      `Content-Type: ${contentType || "application/octet-stream"}\r\n\r\n`,
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+  return new RawBody(Buffer.concat([head, data, tail]), `multipart/form-data; boundary=${boundary}`);
+}
 
 /** Join a server base URL (which may carry a path prefix) with an API path. */
 export function joinUrl(baseUrl: string, apiPath: string, query?: Record<string, unknown>): URL {
@@ -67,10 +87,11 @@ export function summarizeErrorBody(body: string): string {
 
 /** Issue a request and resolve with the response once headers arrive. */
 export function requestRaw(url: URL, options: RequestOptions = {}): Promise<http.IncomingMessage> {
-  const payload = options.body === undefined ? undefined : JSON.stringify(options.body);
+  const raw = options.body instanceof RawBody ? options.body : null;
+  const payload = raw ? raw.data : options.body === undefined ? undefined : JSON.stringify(options.body);
   const headers: Headers = { Accept: "application/json", ...options.headers };
   if (payload !== undefined) {
-    headers["Content-Type"] = "application/json";
+    headers["Content-Type"] = raw ? raw.contentType : "application/json";
     headers["Content-Length"] = String(Buffer.byteLength(payload));
   }
   const transport = url.protocol === "https:" ? https : http;
